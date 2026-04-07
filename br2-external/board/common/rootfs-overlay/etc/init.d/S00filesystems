@@ -1,0 +1,29 @@
+#!/bin/sh
+
+mountpoint_is_active() {
+  mountpoint="$1"
+  grep -qs "[[:space:]]${mountpoint}[[:space:]]" /proc/mounts 2>/dev/null
+}
+
+start() {
+  mkdir -p /proc /sys /run /tmp /dev/pts /dev/shm /var
+
+  mountpoint_is_active /proc || mount -t proc proc /proc
+  mountpoint_is_active /sys || mount -t sysfs sysfs /sys
+  mountpoint_is_active /run || mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run
+  mountpoint_is_active /tmp || mount -t tmpfs -o mode=1777 tmpfs /tmp
+  mountpoint_is_active /dev/pts || mount -t devpts -o gid=5,mode=620,ptmxmode=0666 devpts /dev/pts
+  mountpoint_is_active /dev/shm || mount -t tmpfs -o mode=1777 tmpfs /dev/shm
+}
+
+case "$1" in
+  start|restart)
+    start
+    ;;
+  stop)
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+    ;;
+esac

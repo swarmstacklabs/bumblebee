@@ -1,0 +1,2 @@
+name: BUMBLEBEE_RPI
+ desc: Project-specific Buildroot external tree for Raspberry Pi targets

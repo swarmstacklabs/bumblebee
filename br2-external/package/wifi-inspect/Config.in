@@ -1,0 +1,5 @@
+config BR2_PACKAGE_WIFI_INSPECT
+	bool "wifi-inspect"
+	help
+	  Install a Wi-Fi inspection utility with structured logging for
+	  embedded diagnostics on Raspberry Pi targets.

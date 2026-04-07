@@ -1,0 +1,53 @@
+#!/bin/sh
+
+WIFI_SERVICE="/etc/init.d/S40network-extra"
+WIFI_DEFAULTS="/etc/default/wifi"
+WIFI_INTERFACE="wlan0"
+
+[ -r "$WIFI_DEFAULTS" ] && . "$WIFI_DEFAULTS"
+
+usage() {
+  echo "Usage: wifi-starter {start|stop|restart|status}"
+}
+
+ensure_runtime_mounts() {
+  mkdir -p /proc /sys /run /tmp /dev/pts /dev/shm /var
+  mount -t proc proc /proc 2>/dev/null || true
+  mount -t sysfs sysfs /sys 2>/dev/null || true
+  mount -t tmpfs -o mode=0755,nosuid,nodev tmpfs /run 2>/dev/null || true
+  mount -t tmpfs -o mode=1777 tmpfs /tmp 2>/dev/null || true
+  mount -t devpts -o gid=5,mode=620,ptmxmode=0666 devpts /dev/pts 2>/dev/null || true
+  mount -t tmpfs -o mode=1777 tmpfs /dev/shm 2>/dev/null || true
+  mount -o remount,rw / 2>/dev/null || true
+
+  if [ ! -L /var/run ]; then
+    rm -rf /var/run 2>/dev/null || true
+    ln -s ../run /var/run 2>/dev/null || true
+  fi
+}
+
+show_status() {
+  printf 'interface=%s\n' "$WIFI_INTERFACE"
+  ip link show "$WIFI_INTERFACE" 2>/dev/null || echo "interface_missing"
+  iw dev "$WIFI_INTERFACE" link 2>/dev/null || true
+  ip addr show "$WIFI_INTERFACE" 2>/dev/null || true
+  ps | grep -E 'wpa_supplicant|udhcpc' | grep -v grep || true
+}
+
+case "$1" in
+  start|restart)
+    ensure_runtime_mounts
+    "$WIFI_SERVICE" "$1"
+    ;;
+  stop)
+    "$WIFI_SERVICE" stop
+    ;;
+  status)
+    ensure_runtime_mounts
+    show_status
+    ;;
+  *)
+    usage
+    exit 1
+    ;;
+esac

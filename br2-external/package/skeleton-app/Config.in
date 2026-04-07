@@ -1,0 +1,4 @@
+config BR2_PACKAGE_SKELETON_APP
+	bool "skeleton-app"
+	help
+	  Dummy package placeholder for future project software.

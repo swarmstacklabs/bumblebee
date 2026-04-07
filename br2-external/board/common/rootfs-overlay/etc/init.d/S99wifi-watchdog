@@ -1,0 +1,23 @@
+#!/bin/sh
+
+WIFI_SERVICE="/etc/init.d/S50network-setup"
+WIFI_LATE_DELAY="${WIFI_LATE_DELAY:-5}"
+
+start() {
+  (
+    sleep "$WIFI_LATE_DELAY"
+    "$WIFI_SERVICE" restart >/dev/null 2>&1 || true
+  ) &
+}
+
+case "$1" in
+  start|restart)
+    start
+    ;;
+  stop)
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+    ;;
+esac

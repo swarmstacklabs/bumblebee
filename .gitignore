@@ -1,0 +1,7 @@
+.env
+output/
+dl/
+ccache/
+*.img
+*.xz
+*.gz

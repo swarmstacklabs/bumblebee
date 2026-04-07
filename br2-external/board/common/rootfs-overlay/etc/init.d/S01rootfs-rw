@@ -1,0 +1,22 @@
+#!/bin/sh
+
+start() {
+  mount -o remount,rw / >/dev/null 2>&1 || true
+
+  if [ ! -L /var/run ]; then
+    rm -rf /var/run
+    ln -s ../run /var/run
+  fi
+}
+
+case "$1" in
+  start|restart)
+    start
+    ;;
+  stop)
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+    ;;
+esac
