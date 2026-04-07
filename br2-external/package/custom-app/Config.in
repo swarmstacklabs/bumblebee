@@ -1,4 +1,0 @@
-config BR2_PACKAGE_CUSTOM_APP
-	bool "custom-app"
-	help
-	  Project application template. Replace with your real service or agent.

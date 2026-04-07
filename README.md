@@ -11,6 +11,7 @@ This version is focused on **Raspberry Pi 4 Model B** and also supports **rpi3**
 - generated Wi-Fi config using `WIFI_SSID`, `WIFI_PSK`, `WIFI_COUNTRY`, and `WIFI_INTERFACE`
 - `wifi-inspect` diagnostic utility with structured logs for Wi-Fi and Raspberry Pi firmware checks
 - `custom-app` package template in `br2-external/package/custom-app`
+- `lorawan-server` Zig package in `br2-external/package/lorawan-server`
 - `show-image` helper target
 - improved SD burn workflow using `.env` defaults
 
@@ -57,6 +58,8 @@ make TARGET=rpi5 menuconfig
 
 - `LD_LIBRARY_PATH` and `DYLD_LIBRARY_PATH` are removed for Buildroot calls.
 - `custom-app` is only a template package. Replace it with your own service or binary.
+- `lorawan-server` builds a Zig UDP daemon and currently expects `zig` to be installed on the build host and available on `PATH`.
+- `lorawan-server` now listens on UDP `1700` and exposes an HTTP CRUD API for devices on TCP `8080`.
 - If `WIFI_SSID` and `WIFI_PSK` are set, the build generates `/etc/wpa_supplicant.conf` and `/etc/default/wifi`.
 - Set `HOSTNAME=bumblebee` in `.env` if you want the device to advertise the exact DHCP hostname `bumblebee` instead of the default board-suffixed hostname.
 - The generated `wpa_supplicant.conf` is kept compatible with the current Buildroot `wpa_supplicant` feature set and does not require `ctrl_interface` support.

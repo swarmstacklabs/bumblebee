@@ -1,0 +1,31 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug lorawan-server (host)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/br2-external/package/lorawan-server/src/zig-out/bin/lorawan-server",
+      "args": [],
+      "cwd": "${workspaceFolder}/br2-external/package/lorawan-server/src",
+      "environment": [
+        {
+          "name": "LORAWAN_SERVER_DB_PATH",
+          "value": "${workspaceFolder}/output/lorawan-host/lorawan-server.db"
+        }
+      ],
+      "MIMode": "gdb",
+      "miDebuggerPath": "/usr/bin/gdb",
+      "stopAtEntry": false,
+      "externalConsole": false,
+      "preLaunchTask": "lorawan-host-build",
+      "setupCommands": [
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        }
+      ]
+    }
+  ]
+}

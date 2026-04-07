@@ -1,0 +1,5 @@
+config BR2_PACKAGE_LORAWAN_SERVER
+	bool "lorawan-server"
+	select BR2_PACKAGE_SQLITE
+	help
+	  Build and install the LoRaWAN UDP bridge plus HTTP CRUD API.

@@ -5,3 +5,4 @@ ccache/
 *.img
 *.xz
 *.gz
+.codex

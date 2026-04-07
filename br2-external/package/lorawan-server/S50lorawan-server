@@ -1,0 +1,33 @@
+#!/bin/sh
+
+DAEMON=/usr/bin/lorawan-server
+PIDFILE=/var/run/lorawan-server.pid
+
+start() {
+    echo "Starting lorawan-server"
+    mkdir -p /var/run
+    mkdir -p /var/lib/lorawan-server
+    start-stop-daemon -S -b -m -p "$PIDFILE" -x "$DAEMON" --
+}
+
+stop() {
+    echo "Stopping lorawan-server"
+    start-stop-daemon -K -p "$PIDFILE"
+}
+
+case "$1" in
+  start)
+    start
+    ;;
+  stop)
+    stop
+    ;;
+  restart)
+    stop || true
+    start
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|restart}"
+    exit 1
+    ;;
+esac

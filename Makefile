@@ -43,8 +43,9 @@ BUILDROOT_MAKE = env -u LD_LIBRARY_PATH -u DYLD_LIBRARY_PATH \
 
 .DEFAULT_GOAL := help
 
-.PHONY: help check-buildroot check-target check-tty-tool print-vars defconfig menuconfig build clean distclean \
-        savedefconfig burn tty shell images env-file list-targets show-image rpi3 rpi4 rpi5
+.PHONY: help check-buildroot check-target check-tty-tool check-output-relocated print-vars defconfig menuconfig build clean distclean \
+        savedefconfig burn tty shell images env-file list-targets show-image lorawan-host-build lorawan-host-run \
+        rpi3 rpi4 rpi5
 
 help:
 	@echo "Buildroot multi-target project skeleton v2"
@@ -66,6 +67,8 @@ help:
 	@echo "Other targets:"
 	@echo "  make rpi3 defconfig"
 	@echo "  make rpi5 build"
+	@echo "  make lorawan-host-build"
+	@echo "  make lorawan-host-run"
 	@echo
 	@echo "Config file: $(ENV_FILE)"
 
@@ -112,6 +115,17 @@ check-tty-tool:
 		exit 1; \
 	fi
 
+check-output-relocated: check-target
+	@if [ -f "$(OUTPUT_DIR)/host/bin/fakeroot" ] && ! grep -Fq "$(OUTPUT_DIR)/host" "$(OUTPUT_DIR)/host/bin/fakeroot"; then \
+		echo "Detected a relocated Buildroot output tree for $(TARGET)."; \
+		echo "The host tools under $(OUTPUT_DIR) still point at an older absolute path."; \
+		echo "Recreate the output tree under the current workspace path:"; \
+		echo "  make TARGET=$(TARGET) distclean"; \
+		echo "  make TARGET=$(TARGET) defconfig"; \
+		echo "  make TARGET=$(TARGET) build"; \
+		exit 1; \
+	fi
+
 
 defconfig: check-buildroot check-target
 	@mkdir -p "$(OUTPUT_DIR)" "$(DL_DIR_ABS)" "$(CCACHE_DIR_ABS)"
@@ -124,14 +138,14 @@ defconfig: check-buildroot check-target
 		cp "$(OUTPUT_DIR)/.config" "$(OUTPUT_DIR)/.config.merged"; \
 	fi
 
-menuconfig: check-buildroot check-target
+menuconfig: check-buildroot check-target check-output-relocated
 	@if [ ! -f "$(OUTPUT_DIR)/.config" ]; then \
 		echo "No .config yet for $(TARGET). Running defconfig first."; \
 		$(MAKE) TARGET=$(TARGET) defconfig BUILDROOT_DIR=$(BUILDROOT_DIR); \
 	fi
 	$(BUILDROOT_MAKE) menuconfig BR2_DL_DIR=$(DL_DIR_ABS) BR2_CCACHE_DIR=$(CCACHE_DIR_ABS)
 
-build: check-buildroot check-target
+build: check-buildroot check-target check-output-relocated
 	@if [ ! -f "$(OUTPUT_DIR)/.config" ]; then \
 		echo "No .config yet for $(TARGET). Running defconfig first."; \
 		$(MAKE) TARGET=$(TARGET) defconfig BUILDROOT_DIR=$(BUILDROOT_DIR); \
@@ -208,6 +222,21 @@ env-file:
 
 shell:
 	@env -u LD_LIBRARY_PATH -u DYLD_LIBRARY_PATH bash
+
+lorawan-host-build:
+	@mkdir -p "$(OUTPUT_BASE)/lorawan-host"
+	@cd "$(CURDIR)/br2-external/package/lorawan-server/src" && \
+		ZIG_LOCAL_CACHE_DIR="$$PWD/.zig-local-cache" \
+		ZIG_GLOBAL_CACHE_DIR="$$PWD/.zig-global-cache" \
+		zig build -Doptimize=Debug
+
+lorawan-host-run:
+	@mkdir -p "$(OUTPUT_BASE)/lorawan-host"
+	@cd "$(CURDIR)/br2-external/package/lorawan-server/src" && \
+		LORAWAN_SERVER_DB_PATH="$(OUTPUT_BASE)/lorawan-host/lorawan-server.db" \
+		ZIG_LOCAL_CACHE_DIR="$$PWD/.zig-local-cache" \
+		ZIG_GLOBAL_CACHE_DIR="$$PWD/.zig-global-cache" \
+		zig build run -Doptimize=Debug
 
 %:
 	@:
