@@ -23,5 +23,5 @@ pub fn main() !void {
     const http_thread = try std.Thread.spawn(.{}, http_server.serverMain, .{ &app, &runtime_config });
     defer http_thread.join();
 
-    try udp_server.serverMain(&runtime_config);
+    try udp_server.serverMain(&app, &runtime_config);
 }
