@@ -1,10 +1,10 @@
 const std = @import("std");
 const posix = std.posix;
 
-const storage = @import("storage.zig");
+const app_mod = @import("app.zig");
 const packets = @import("udp_packets.zig");
-const App = storage.App;
-const c = storage.c;
+const App = app_mod.App;
+const c = app_mod.c;
 
 pub const GatewayTarget = struct {
     addr: posix.sockaddr.in,

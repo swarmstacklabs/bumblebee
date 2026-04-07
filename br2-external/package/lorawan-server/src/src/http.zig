@@ -1,15 +1,15 @@
 const std = @import("std");
 const posix = std.posix;
 
-const config = @import("config.zig");
+const app_mod = @import("app.zig");
 const logger = @import("logger.zig");
-const storage = @import("storage.zig");
-const App = storage.App;
-const DeviceJson = storage.DeviceJson;
-const DevicePayload = storage.DevicePayload;
-const ErrorResponse = storage.ErrorResponse;
-const StatusResponse = storage.StatusResponse;
-const c = storage.c;
+const App = app_mod.App;
+const Config = app_mod.Config;
+const DeviceJson = app_mod.DeviceJson;
+const DevicePayload = app_mod.DevicePayload;
+const ErrorResponse = app_mod.ErrorResponse;
+const StatusResponse = app_mod.StatusResponse;
+const c = app_mod.c;
 
 const HttpRequest = struct {
     method: []const u8,
@@ -22,7 +22,7 @@ const HttpClientContext = struct {
     client: posix.socket_t,
 };
 
-pub fn serverMain(app: *App, runtime_config: *const config.Config) !void {
+pub fn serverMain(app: *App, runtime_config: *const Config) !void {
     const server_sock = try posix.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
     defer posix.close(server_sock);
 

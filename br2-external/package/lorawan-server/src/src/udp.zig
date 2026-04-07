@@ -1,13 +1,13 @@
 const std = @import("std");
 const posix = std.posix;
 
-const config = @import("config.zig");
+const app_mod = @import("app.zig");
 const gateway_state = @import("gateway_state.zig");
 const logger = @import("logger.zig");
 const pending_downlinks = @import("pending_downlinks.zig");
-const storage = @import("storage.zig");
 const packets = @import("udp_packets.zig");
-const App = storage.App;
+const App = app_mod.App;
+const Config = app_mod.Config;
 
 const UdpPacketContext = struct {
     server: *Server,
@@ -44,7 +44,7 @@ const Server = struct {
     }
 };
 
-pub fn serverMain(app: *App, runtime_config: *const config.Config) !void {
+pub fn serverMain(app: *App, runtime_config: *const Config) !void {
     const sock = try posix.socket(posix.AF.INET, posix.SOCK.DGRAM, 0);
     defer posix.close(sock);
 
