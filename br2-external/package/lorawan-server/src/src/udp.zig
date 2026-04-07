@@ -26,12 +26,12 @@ pub const DecodedFrame = packets.DecodedFrame;
 pub const DownlinkTiming = packets.DownlinkTiming;
 pub const DownlinkRequest = packets.DownlinkRequest;
 
-const Server = struct {
+pub const Server = struct {
     app: *App,
     sock: posix.socket_t,
     pending: pending_downlinks.Tracker,
 
-    fn init(app: *App, sock: posix.socket_t) Server {
+    pub fn init(app: *App, sock: posix.socket_t) Server {
         return .{
             .app = app,
             .sock = sock,
@@ -39,17 +39,31 @@ const Server = struct {
         };
     }
 
-    fn deinit(self: *Server) void {
+    pub fn deinit(self: *Server) void {
         self.pending.deinit();
     }
 };
 
 pub fn serverMain(app: *App, runtime_config: *const Config) !void {
-    const sock = try posix.socket(posix.AF.INET, posix.SOCK.DGRAM, 0);
+    const sock = try initServerSocket(runtime_config);
     defer posix.close(sock);
 
-    const flags = try posix.fcntl(sock, posix.F.GETFL, 0);
-    _ = try posix.fcntl(sock, posix.F.SETFL, flags | posix.SOCK.NONBLOCK);
+    var server = Server.init(app, sock);
+    defer server.deinit();
+    while (true) try drainReady(&server);
+}
+
+pub fn sendDownlink(app: *App, sock: posix.socket_t, gateway_mac: [8]u8, req: DownlinkRequest) !u16 {
+    var server = Server.init(app, sock);
+    defer server.deinit();
+    return sendDownlinkWithServer(&server, gateway_mac, req);
+}
+
+pub fn initServerSocket(runtime_config: *const Config) !posix.socket_t {
+    const sock = try posix.socket(posix.AF.INET, posix.SOCK.DGRAM, 0);
+    errdefer posix.close(sock);
+
+    try setNonBlocking(sock);
 
     const enable: c_int = 1;
     try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.REUSEADDR, std.mem.asBytes(&enable));
@@ -63,70 +77,50 @@ pub fn serverMain(app: *App, runtime_config: *const Config) !void {
 
     try posix.bind(sock, @ptrCast(&addr), @sizeOf(@TypeOf(addr)));
 
-    var server = Server.init(app, sock);
-    defer server.deinit();
-
     logger.info("udp", "listener_started", "udp listener started", .{
         .bind_address = runtime_config.bind_address,
         .port = runtime_config.udp_port,
     });
 
+    return sock;
+}
+
+pub fn drainReady(server: *Server) !void {
     var buf: [4096]u8 = undefined;
 
     while (true) {
         var client_addr: posix.sockaddr.in = undefined;
         var client_len: posix.socklen_t = @sizeOf(posix.sockaddr.in);
 
-        const n = posix.recvfrom(sock, buf[0..], 0, @ptrCast(&client_addr), &client_len) catch |err| switch (err) {
-            error.WouldBlock => {
-                std.Thread.sleep(10 * std.time.ns_per_ms);
-                continue;
-            },
+        const n = posix.recvfrom(server.sock, buf[0..], 0, @ptrCast(&client_addr), &client_len) catch |err| switch (err) {
+            error.WouldBlock => return,
             else => return err,
         };
 
-        const context = try std.heap.page_allocator.create(UdpPacketContext);
-        errdefer std.heap.page_allocator.destroy(context);
-        context.* = .{
-            .server = &server,
-            .client_addr = client_addr,
-            .client_len = client_len,
-            .msg = try std.heap.page_allocator.dupe(u8, buf[0..n]),
-        };
-
-        const thread = std.Thread.spawn(.{}, handleUdpPacketThread, .{context}) catch |err| {
-            logger.err("udp", "worker_spawn_failed", "udp worker thread spawn failed", .{
-                .error_name = @errorName(err),
-            });
-            handleUdpPacket(context) catch |handle_err| {
-                logger.err("udp", "packet_error", "udp packet handling failed", .{
-                    .error_name = @errorName(handle_err),
-                });
-            };
-            continue;
-        };
-        thread.detach();
+        try handleDatagram(server, client_addr, client_len, buf[0..n]);
     }
 }
 
-pub fn sendDownlink(app: *App, sock: posix.socket_t, gateway_mac: [8]u8, req: DownlinkRequest) !u16 {
-    var server = Server.init(app, sock);
-    defer server.deinit();
-    return sendDownlinkWithServer(&server, gateway_mac, req);
-}
+pub fn handleDatagram(
+    server: *Server,
+    client_addr: posix.sockaddr.in,
+    client_len: posix.socklen_t,
+    msg: []const u8,
+) !void {
+    const owned_msg = try server.app.allocator.dupe(u8, msg);
+    defer server.app.allocator.free(owned_msg);
 
-fn handleUdpPacketThread(context: *UdpPacketContext) void {
-    handleUdpPacket(context) catch |err| {
-        logger.err("udp", "packet_error", "udp packet handling failed", .{
-            .error_name = @errorName(err),
-        });
+    var context = UdpPacketContext{
+        .server = server,
+        .client_addr = client_addr,
+        .client_len = client_len,
+        .msg = owned_msg,
     };
+
+    try handleUdpPacket(&context);
 }
 
 fn handleUdpPacket(context: *UdpPacketContext) !void {
-    defer std.heap.page_allocator.free(context.msg);
-    defer std.heap.page_allocator.destroy(context);
-
     const port = std.mem.bigToNative(u16, context.client_addr.port);
     const ip = @as([4]u8, @bitCast(context.client_addr.addr));
 
@@ -160,6 +154,11 @@ fn handleUdpPacket(context: *UdpPacketContext) !void {
             .ident = ident,
         }),
     }
+}
+
+fn setNonBlocking(sock: posix.socket_t) !void {
+    const flags = try posix.fcntl(sock, posix.F.GETFL, 0);
+    _ = try posix.fcntl(sock, posix.F.SETFL, flags | posix.SOCK.NONBLOCK);
 }
 
 fn handlePushData(context: *UdpPacketContext, version: u8, token: u16) !void {

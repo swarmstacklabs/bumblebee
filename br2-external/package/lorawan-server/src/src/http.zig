@@ -17,17 +17,52 @@ const HttpRequest = struct {
     body: []const u8,
 };
 
-const HttpClientContext = struct {
-    app: *App,
-    client: posix.socket_t,
+pub const Connection = struct {
+    fd: posix.socket_t,
+    buf: [65536]u8 = undefined,
+    used: usize = 0,
+    header_end: ?usize = null,
+    content_length: usize = 0,
+    sent_continue: bool = false,
 };
 
 pub fn serverMain(app: *App, runtime_config: *const Config) !void {
-    const server_sock = try posix.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
+    const server_sock = try initServerSocket(runtime_config);
     defer posix.close(server_sock);
+
+    var conns = std.ArrayList(Connection){};
+    defer {
+        for (conns.items) |conn| posix.close(conn.fd);
+        conns.deinit(app.allocator);
+    }
+
+    while (true) {
+        try acceptReadyClients(server_sock, app.allocator, &conns);
+        var i: usize = 0;
+        while (i < conns.items.len) {
+            const done = serviceReadyClient(app, &conns.items[i]) catch |err| switch (err) {
+                error.WouldBlock => false,
+                error.ConnectionClosed => true,
+                else => return err,
+            };
+            if (done) {
+                posix.close(conns.items[i].fd);
+                _ = conns.orderedRemove(i);
+                continue;
+            }
+            i += 1;
+        }
+        std.Thread.sleep(10 * std.time.ns_per_ms);
+    }
+}
+
+pub fn initServerSocket(runtime_config: *const Config) !posix.socket_t {
+    const server_sock = try posix.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
+    errdefer posix.close(server_sock);
 
     const enable: c_int = 1;
     try posix.setsockopt(server_sock, posix.SOL.SOCKET, posix.SO.REUSEADDR, std.mem.asBytes(&enable));
+    try setNonBlocking(server_sock);
 
     var addr = posix.sockaddr.in{
         .family = posix.AF.INET,
@@ -38,74 +73,59 @@ pub fn serverMain(app: *App, runtime_config: *const Config) !void {
 
     try posix.bind(server_sock, @ptrCast(&addr), @sizeOf(@TypeOf(addr)));
     try posix.listen(server_sock, 16);
+
     logger.info("http", "listener_started", "http listener started", .{
         .bind_address = runtime_config.bind_address,
         .port = runtime_config.http_port,
     });
 
+    return server_sock;
+}
+
+pub fn acceptReadyClients(
+    server_sock: posix.socket_t,
+    allocator: std.mem.Allocator,
+    conns: *std.ArrayList(Connection),
+) !void {
     while (true) {
         var client_addr: posix.sockaddr.in = undefined;
         var client_len: posix.socklen_t = @sizeOf(posix.sockaddr.in);
-        const client = try posix.accept(server_sock, @ptrCast(&client_addr), &client_len, 0);
-        const context = try std.heap.page_allocator.create(HttpClientContext);
-        context.* = .{
-            .app = app,
-            .client = client,
+        const client = posix.accept(server_sock, @ptrCast(&client_addr), &client_len, 0) catch |err| switch (err) {
+            error.WouldBlock => return,
+            else => return err,
         };
-        const thread = std.Thread.spawn(.{}, handleHttpClientThread, .{context}) catch |err| {
-            logger.err("http", "worker_spawn_failed", "http worker thread spawn failed", .{
-                .error_name = @errorName(err),
-            });
-            std.heap.page_allocator.destroy(context);
-            handleHttpClient(app, client) catch |handle_err| {
-                logger.err("http", "client_error", "http client handling failed", .{
-                    .error_name = @errorName(handle_err),
-                });
-            };
-            posix.close(client);
-            continue;
-        };
-        thread.detach();
+        errdefer posix.close(client);
+        try setNonBlocking(client);
+        try conns.append(allocator, .{ .fd = client });
     }
 }
 
-fn handleHttpClientThread(context: *HttpClientContext) void {
-    defer std.heap.page_allocator.destroy(context);
-    defer posix.close(context.client);
+pub fn serviceReadyClient(app: *App, conn: *Connection) !bool {
+    while (conn.used < conn.buf.len) {
+        const n = posix.recv(conn.fd, conn.buf[conn.used..], 0) catch |err| switch (err) {
+            error.WouldBlock => return false,
+            else => return err,
+        };
+        if (n == 0) return true;
+        conn.used += n;
 
-    handleHttpClient(context.app, context.client) catch |err| {
-        logger.err("http", "client_error", "http client handling failed", .{
-            .error_name = @errorName(err),
-        });
-    };
-}
-
-fn handleHttpClient(app: *App, client: posix.socket_t) !void {
-    var buf: [65536]u8 = undefined;
-    const request = try readHttpRequest(client, &buf);
-    try routeHttpRequest(app, client, request);
-}
-
-fn readHttpRequest(client: posix.socket_t, buf: []u8) !HttpRequest {
-    var total: usize = 0;
-    var header_end: ?usize = null;
-    var content_length: usize = 0;
-
-    while (total < buf.len) {
-        const n = try posix.recv(client, buf[total..], 0);
-        if (n == 0) return error.ConnectionClosed;
-        total += n;
-
-        if (header_end == null) {
-            if (std.mem.indexOf(u8, buf[0..total], "\r\n\r\n")) |idx| {
-                header_end = idx + 4;
-                content_length = parseContentLength(buf[0..idx]) catch 0;
+        if (conn.header_end == null) {
+            if (std.mem.indexOf(u8, conn.buf[0..conn.used], "\r\n\r\n")) |idx| {
+                conn.header_end = idx + 4;
+                const headers = conn.buf[0..idx];
+                conn.content_length = parseContentLength(headers) catch 0;
+                if (!conn.sent_continue and expectsContinue(headers)) {
+                    try writeAll(conn.fd, "HTTP/1.1 100 Continue\r\n\r\n");
+                    conn.sent_continue = true;
+                }
             }
         }
 
-        if (header_end) |end| {
-            if (total >= end + content_length) {
-                return parseHttpRequest(buf[0 .. end + content_length], end);
+        if (conn.header_end) |end| {
+            if (conn.used >= end + conn.content_length) {
+                const request = try parseHttpRequest(conn.buf[0 .. end + conn.content_length], end);
+                try routeHttpRequest(app, conn.fd, request);
+                return true;
             }
         }
     }
@@ -123,6 +143,18 @@ fn parseContentLength(headers: []const u8) !usize {
         }
     }
     return 0;
+}
+
+fn expectsContinue(headers: []const u8) bool {
+    var it = std.mem.tokenizeSequence(u8, headers, "\r\n");
+    _ = it.next();
+    while (it.next()) |line| {
+        if (std.ascii.startsWithIgnoreCase(line, "Expect:")) {
+            const value = std.mem.trim(u8, line["Expect:".len..], " \t");
+            if (std.ascii.eqlIgnoreCase(value, "100-continue")) return true;
+        }
+    }
+    return false;
 }
 
 fn parseHttpRequest(raw: []const u8, body_start: usize) !HttpRequest {
@@ -406,8 +438,20 @@ fn sendRaw(client: posix.socket_t, status: []const u8, content_type: []const u8,
 fn writeAll(fd: posix.socket_t, data: []const u8) !void {
     var offset: usize = 0;
     while (offset < data.len) {
-        const written = try posix.send(fd, data[offset..], 0);
+        const written = posix.send(fd, data[offset..], 0) catch |err| switch (err) {
+            error.WouldBlock => {
+                var pollfd = [_]posix.pollfd{.{ .fd = fd, .events = posix.POLL.OUT, .revents = 0 }};
+                _ = try posix.poll(&pollfd, -1);
+                continue;
+            },
+            else => return err,
+        };
         if (written == 0) return error.ConnectionClosed;
         offset += written;
     }
+}
+
+fn setNonBlocking(sock: posix.socket_t) !void {
+    const flags = try posix.fcntl(sock, posix.F.GETFL, 0);
+    _ = try posix.fcntl(sock, posix.F.SETFL, flags | posix.SOCK.NONBLOCK);
 }
