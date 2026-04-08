@@ -56,7 +56,7 @@ pub fn serverMain(app: *App, runtime_config: *const Config) !void {
                 continue;
             }
             if ((revents & posix.POLL.IN) != 0) {
-                const done = http.serviceReadyClient(app, &http_conns.items[i]) catch |err| switch (err) {
+                const done = http.serviceReadyClient(app, runtime_config, &http_conns.items[i]) catch |err| switch (err) {
                     error.ConnectionClosed => true,
                     else => return err,
                 };
