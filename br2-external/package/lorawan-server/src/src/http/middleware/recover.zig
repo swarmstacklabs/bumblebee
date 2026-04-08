@@ -1,7 +1,7 @@
-const context_mod = @import("../http/context.zig");
-const runtime = @import("../http/runtime.zig");
-const app_mod = @import("../app.zig");
-const logger = @import("../logger.zig");
+const context_mod = @import("../context.zig");
+const runtime = @import("../runtime.zig");
+const app_mod = @import("../../app.zig");
+const logger = @import("../../logger.zig");
 
 pub fn middleware(ctx: *context_mod.Context, exec: *runtime.Executor) runtime.AppError!void {
     exec.next(ctx) catch |err| switch (err) {

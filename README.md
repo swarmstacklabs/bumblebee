@@ -122,3 +122,24 @@ proc     /proc    proc     defaults  0 0
 sysfs    /sys     sysfs    defaults  0 0
 devtmpfs /dev     devtmpfs mode=0755 0 0
 tmpfs    /run     tmpfs    defaults  0 0
+
+
+#### What missing in lorawan
+
+What is in place:
+
+LoRaWAN PHYPayload decode for join requests and uplink/downlink data frames.
+AES-128/CMAC-based MIC verification, session key derivation, payload ciphering, join-accept encode, and unicast downlink encode.
+MAC command parse/encode for the command set that existed in bumblebee_mac_commands.erl.
+SQLite-backed lookup/update for gateways, networks, devices, and nodes using the existing *_json columns.
+UDP integration that logs lorawan_join_request and lorawan_uplink events and emits join-accept / basic MAC-response downlinks.
+What is still not fully ported from the Erlang behavior:
+
+Full profile / group model and the complete join policy from bumblebee_mac.erl.
+ADR state machine, RX window enforcement, duty-cycle handling, and the richer node-health/devstat logic.
+Full parity for all inbound MAC-command side effects; right now the automatic downlink responses are intentionally narrow.
+Verification:
+
+zig build in br2-external/package/lorawan-server/src
+zig test src/lorawan.zig in br2-external/package/lorawan-server/src
+The main residual risk is data-shape assumptions in src/lorawan/repository.zig (line 30): the new service expects network_json, gateway_json, and node_json fields such as netid, rxwin_init, and tx_rfch to exist or fall back cleanly. The next step should be porting the remaining profile/group/node policy logic and exposing CRUD for networks/nodes/gateways so the new package has explicit config instead of inferred JSON defaults.

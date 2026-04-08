@@ -8,15 +8,20 @@ pub const Entry = struct {
     sent_at_ms: i64,
 };
 
+pub const Key = struct {
+    gateway_mac: [8]u8,
+    token: u16,
+};
+
 pub const Tracker = struct {
     allocator: std.mem.Allocator,
     mutex: std.Thread.Mutex = .{},
-    pending: std.AutoHashMap(u16, Entry),
+    pending: std.AutoHashMap(Key, Entry),
 
     pub fn init(allocator: std.mem.Allocator) Tracker {
         return .{
             .allocator = allocator,
-            .pending = std.AutoHashMap(u16, Entry).init(allocator),
+            .pending = std.AutoHashMap(Key, Entry).init(allocator),
         };
     }
 
@@ -28,7 +33,7 @@ pub const Tracker = struct {
         self.pending.deinit();
     }
 
-    pub fn remember(self: *Tracker, token: u16, gateway_mac: [8]u8, dev_addr: ?[]const u8) !void {
+    pub fn remember(self: *Tracker, gateway_mac: [8]u8, token: u16, dev_addr: ?[]const u8) !void {
         const entry = Entry{
             .gateway_mac = gateway_mac,
             .dev_addr = if (dev_addr) |value| try self.allocator.dupe(u8, value) else null,
@@ -39,17 +44,25 @@ pub const Tracker = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        if (self.pending.fetchRemove(token)) |removed| {
+        const key = Key{
+            .gateway_mac = gateway_mac,
+            .token = token,
+        };
+
+        if (self.pending.fetchRemove(key)) |removed| {
             freeEntry(self.allocator, removed.value);
         }
-        try self.pending.put(token, entry);
+        try self.pending.put(key, entry);
     }
 
-    pub fn take(self: *Tracker, token: u16) ?Entry {
+    pub fn take(self: *Tracker, gateway_mac: [8]u8, token: u16) ?Entry {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const removed = self.pending.fetchRemove(token) orelse return null;
+        const removed = self.pending.fetchRemove(.{
+            .gateway_mac = gateway_mac,
+            .token = token,
+        }) orelse return null;
         return removed.value;
     }
 
@@ -58,7 +71,7 @@ pub const Tracker = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        var to_remove = std.ArrayList(u16){};
+        var to_remove = std.ArrayList(Key){};
         defer to_remove.deinit(self.allocator);
 
         var it = self.pending.iterator();
@@ -68,8 +81,8 @@ pub const Tracker = struct {
             }
         }
 
-        for (to_remove.items) |token| {
-            if (self.pending.fetchRemove(token)) |removed| {
+        for (to_remove.items) |key| {
+            if (self.pending.fetchRemove(key)) |removed| {
                 freeEntry(self.allocator, removed.value);
             }
         }

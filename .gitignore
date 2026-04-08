@@ -6,3 +6,8 @@ ccache/
 *.xz
 *.gz
 .codex
+.zig-cache/
+.zig-local-cache/
+.zig-cache-local/
+.zig-global-cache/
+zig-out/

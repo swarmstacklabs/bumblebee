@@ -2,9 +2,9 @@ const std = @import("std");
 const posix = std.posix;
 
 const app_mod = @import("app.zig");
-const http = @import("http.zig");
-const udp = @import("udp.zig");
-const http_transport = @import("http_transport.zig");
+const http = @import("http/http.zig");
+const udp = @import("udp/udp.zig");
+const http_transport = @import("http/transport.zig");
 
 const App = app_mod.App;
 const Config = app_mod.Config;
@@ -19,7 +19,6 @@ pub fn serverMain(app: *App, runtime_config: *const Config) !void {
     defer http_transport.closeServerSocket(http_sock);
 
     var udp_server = udp.Server.init(app, udp_sock);
-    defer udp_server.deinit();
 
     var http_conns = std.ArrayList(http.Connection){};
     defer {

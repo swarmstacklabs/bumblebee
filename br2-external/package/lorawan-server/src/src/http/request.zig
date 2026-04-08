@@ -1,5 +1,5 @@
 const std = @import("std");
-const http_transport = @import("../http_transport.zig");
+const http_transport = @import("transport.zig");
 
 pub const Method = enum {
     GET,

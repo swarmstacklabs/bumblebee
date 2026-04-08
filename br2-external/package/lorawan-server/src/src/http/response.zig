@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const http_transport = @import("../http_transport.zig");
+const http_transport = @import("transport.zig");
 const request_mod = @import("request.zig");
 
 pub const Response = struct {

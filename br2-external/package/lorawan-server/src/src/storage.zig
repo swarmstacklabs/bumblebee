@@ -1,5 +1,7 @@
 const std = @import("std");
 const logger = @import("logger.zig");
+const pending_downlinks = @import("lorawan/pending_downlinks.zig");
+const sqlite = @import("sqlite_helpers.zig");
 
 pub const c = @cImport({
     @cInclude("sqlite3.h");
@@ -21,6 +23,15 @@ pub const DeviceJson = struct {
     app_key: []const u8,
     created_at: []const u8,
     updated_at: []const u8,
+
+    pub fn deinit(self: DeviceJson, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+        allocator.free(self.dev_eui);
+        allocator.free(self.app_eui);
+        allocator.free(self.app_key);
+        allocator.free(self.created_at);
+        allocator.free(self.updated_at);
+    }
 };
 
 pub const DevicePayload = struct {
@@ -40,21 +51,29 @@ pub const DevicePayload = struct {
 pub const App = struct {
     allocator: std.mem.Allocator,
     db: *c.sqlite3,
+    pending_downlinks: pending_downlinks.Tracker,
     mutex: std.Thread.Mutex = .{},
 
     pub fn init(allocator: std.mem.Allocator, path: []const u8) !App {
         try ensureDbDir(path);
 
+        const path_z = try allocator.dupeZ(u8, path);
+        defer allocator.free(path_z);
+
         var db_ptr: ?*c.sqlite3 = null;
-        if (c.sqlite3_open(path.ptr, &db_ptr) != c.SQLITE_OK or db_ptr == null) {
+        if (c.sqlite3_open(path_z.ptr, &db_ptr) != c.SQLITE_OK or db_ptr == null) {
             return error.SqliteOpenFailed;
         }
 
         var self = App{
             .allocator = allocator,
             .db = db_ptr.?,
+            .pending_downlinks = pending_downlinks.Tracker.init(allocator),
         };
-        errdefer _ = c.sqlite3_close(self.db);
+        errdefer {
+            self.pending_downlinks.deinit();
+            _ = c.sqlite3_close(self.db);
+        }
 
         try self.exec("PRAGMA foreign_keys = ON;");
         try self.runMigrations();
@@ -62,6 +81,7 @@ pub const App = struct {
     }
 
     pub fn deinit(self: *App) void {
+        self.pending_downlinks.deinit();
         _ = c.sqlite3_close(self.db);
     }
 
@@ -89,8 +109,11 @@ pub const App = struct {
     }
 
     fn execUnlocked(self: *App, sql: []const u8) !void {
+        const sql_z = try self.allocator.dupeZ(u8, sql);
+        defer self.allocator.free(sql_z);
+
         var err_msg: [*c]u8 = null;
-        if (c.sqlite3_exec(self.db, sql.ptr, null, null, &err_msg) != c.SQLITE_OK) {
+        if (c.sqlite3_exec(self.db, sql_z.ptr, null, null, &err_msg) != c.SQLITE_OK) {
             if (err_msg != null) {
                 logger.err("storage", "sqlite_exec_failed", "sqlite exec failed", .{
                     .error_message = std.mem.span(@as([*:0]const u8, err_msg)),
@@ -191,26 +214,29 @@ const migration_v1_sql =
     "CREATE INDEX IF NOT EXISTS idx_events_entity ON events(entity_type, entity_id);" ++
     "CREATE INDEX IF NOT EXISTS idx_events_created_at ON events(created_at);";
 
+const migration_v2_sql =
+    "ALTER TABLE gateway_runtime ADD COLUMN semtech_version INTEGER;";
+
 const migrations = [_]Migration{
     .{
         .version = 1,
         .name = "initial_schema",
         .sql = migration_v1_sql,
     },
+    .{
+        .version = 2,
+        .name = "gateway_runtime_semtech_version",
+        .sql = migration_v2_sql,
+    },
 };
 
 fn getSchemaVersion(db: *c.sqlite3) !i64 {
     const sql = "SELECT COALESCE(MAX(version), 0) FROM schema_migrations;";
-    var stmt: ?*c.sqlite3_stmt = null;
-    if (c.sqlite3_prepare_v2(db, sql.ptr, @as(c_int, @intCast(sql.len)), &stmt, null) != c.SQLITE_OK) {
-        return error.SqlitePrepareFailed;
-    }
-    defer _ = c.sqlite3_finalize(stmt);
+    const stmt = try sqlite.Statement.prepare(db, sql);
+    defer stmt.deinit();
 
-    const step_result = c.sqlite3_step(stmt);
-    if (step_result != c.SQLITE_ROW) return error.SqliteStepFailed;
-
-    return c.sqlite3_column_int64(stmt, 0);
+    try stmt.expectRow();
+    return stmt.readInt64(0);
 }
 
 fn applyMigration(db: *c.sqlite3, migration: Migration) !void {
@@ -220,25 +246,22 @@ fn applyMigration(db: *c.sqlite3, migration: Migration) !void {
     try execDb(db, migration.sql);
 
     const insert_sql = "INSERT INTO schema_migrations(version, name) VALUES(?, ?);";
-    var stmt: ?*c.sqlite3_stmt = null;
-    if (c.sqlite3_prepare_v2(db, insert_sql.ptr, @as(c_int, @intCast(insert_sql.len)), &stmt, null) != c.SQLITE_OK) {
-        return error.SqlitePrepareFailed;
-    }
-    defer _ = c.sqlite3_finalize(stmt);
+    const stmt = try sqlite.Statement.prepare(db, insert_sql);
+    defer stmt.deinit();
 
-    _ = c.sqlite3_bind_int64(stmt.?, 1, migration.version);
-    _ = c.sqlite3_bind_text(stmt.?, 2, migration.name.ptr, @as(c_int, @intCast(migration.name.len)), null);
-
-    if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
-        return error.SqliteStepFailed;
-    }
+    stmt.bindInt64(1, migration.version);
+    stmt.bindText(2, migration.name);
+    try stmt.expectDone();
 
     try execDb(db, "COMMIT;");
 }
 
 fn execDb(db: *c.sqlite3, sql: []const u8) !void {
+    const sql_z = try std.heap.page_allocator.dupeZ(u8, sql);
+    defer std.heap.page_allocator.free(sql_z);
+
     var err_msg: [*c]u8 = null;
-    if (c.sqlite3_exec(db, sql.ptr, null, null, &err_msg) != c.SQLITE_OK) {
+    if (c.sqlite3_exec(db, sql_z.ptr, null, null, &err_msg) != c.SQLITE_OK) {
         if (err_msg != null) {
             logger.err("storage", "sqlite_exec_failed", "sqlite exec failed", .{
                 .error_message = std.mem.span(@as([*:0]const u8, err_msg)),

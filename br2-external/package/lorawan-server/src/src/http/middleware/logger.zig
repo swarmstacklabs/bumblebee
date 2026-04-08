@@ -1,8 +1,8 @@
 const std = @import("std");
 
-const context_mod = @import("../http/context.zig");
-const runtime = @import("../http/runtime.zig");
-const logger = @import("../logger.zig");
+const context_mod = @import("../context.zig");
+const runtime = @import("../runtime.zig");
+const logger = @import("../../logger.zig");
 
 pub fn middleware(ctx: *context_mod.Context, exec: *runtime.Executor) runtime.AppError!void {
     logger.info("http", "request_started", "http request started", .{

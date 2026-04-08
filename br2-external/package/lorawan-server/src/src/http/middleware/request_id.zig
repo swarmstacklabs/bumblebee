@@ -1,7 +1,7 @@
 const std = @import("std");
 
-const context_mod = @import("../http/context.zig");
-const runtime = @import("../http/runtime.zig");
+const context_mod = @import("../context.zig");
+const runtime = @import("../runtime.zig");
 
 pub fn middleware(ctx: *context_mod.Context, exec: *runtime.Executor) runtime.AppError!void {
     const request_id = try std.fmt.allocPrint(ctx.allocator, "req-{d}", .{std.time.microTimestamp()});

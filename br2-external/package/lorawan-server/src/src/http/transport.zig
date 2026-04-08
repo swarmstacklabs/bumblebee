@@ -1,7 +1,7 @@
 const std = @import("std");
 const posix = std.posix;
 
-const app_mod = @import("app.zig");
+const app_mod = @import("../app.zig");
 
 const Config = app_mod.Config;
 const c = app_mod.c;

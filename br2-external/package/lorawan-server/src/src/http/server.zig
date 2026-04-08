@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const app_mod = @import("../app.zig");
-const http_transport = @import("../http_transport.zig");
+const http_transport = @import("transport.zig");
 const logger = @import("../logger.zig");
 const context_mod = @import("context.zig");
 const pipeline = @import("pipeline.zig");
@@ -9,15 +9,15 @@ const request_mod = @import("request.zig");
 const router_mod = @import("router.zig");
 const runtime = @import("runtime.zig");
 
-const home_handler = @import("../handlers/home.zig");
-const health_handler = @import("../handlers/health.zig");
-const devices_handler = @import("../handlers/devices.zig");
+const home_handler = @import("handlers/home.zig");
+const health_handler = @import("handlers/health.zig");
+const devices_handler = @import("handlers/devices.zig");
 
-const recover_middleware = @import("../middleware/recover.zig");
-const logger_middleware = @import("../middleware/logger.zig");
-const request_id_middleware = @import("../middleware/request_id.zig");
-const cors_middleware = @import("../middleware/cors.zig");
-const auth_middleware = @import("../middleware/auth.zig");
+const recover_middleware = @import("middleware/recover.zig");
+const logger_middleware = @import("middleware/logger.zig");
+const request_id_middleware = @import("middleware/request_id.zig");
+const cors_middleware = @import("middleware/cors.zig");
+const auth_middleware = @import("middleware/auth.zig");
 
 const App = app_mod.App;
 const Config = app_mod.Config;
