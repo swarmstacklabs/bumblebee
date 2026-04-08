@@ -1,6 +1,6 @@
 const std = @import("std");
-const posix = std.posix;
 
+const http_transport = @import("../http_transport.zig");
 const request_mod = @import("request.zig");
 
 pub const Response = struct {
@@ -58,7 +58,7 @@ pub const Response = struct {
         try self.headers.append(self.allocator, .{ .name = name, .value = value });
     }
 
-    pub fn writeTo(self: *const Response, client: posix.socket_t) !void {
+    pub fn writeTo(self: *const Response, conn: *http_transport.Connection) !void {
         var header_buf: [1024]u8 = undefined;
         var stream = std.io.fixedBufferStream(&header_buf);
         const writer = stream.writer();
@@ -72,8 +72,8 @@ pub const Response = struct {
         }
         try writer.writeAll("\r\n");
 
-        try writeAll(client, stream.getWritten());
-        try writeAll(client, self.body);
+        try conn.writeAll(stream.getWritten());
+        try conn.writeAll(self.body);
     }
 
     fn resetBody(self: *Response) void {
@@ -84,22 +84,6 @@ pub const Response = struct {
         self.body = "";
     }
 };
-
-fn writeAll(fd: posix.socket_t, data: []const u8) !void {
-    var offset: usize = 0;
-    while (offset < data.len) {
-        const written = posix.send(fd, data[offset..], 0) catch |err| switch (err) {
-            error.WouldBlock => {
-                var pollfd = [_]posix.pollfd{.{ .fd = fd, .events = posix.POLL.OUT, .revents = 0 }};
-                _ = try posix.poll(&pollfd, -1);
-                continue;
-            },
-            else => return err,
-        };
-        if (written == 0) return error.ConnectionClosed;
-        offset += written;
-    }
-}
 
 fn reasonPhrase(status: u16) []const u8 {
     return switch (status) {

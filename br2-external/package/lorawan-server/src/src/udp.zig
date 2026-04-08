@@ -6,6 +6,7 @@ const gateway_state = @import("gateway_state.zig");
 const logger = @import("logger.zig");
 const pending_downlinks = @import("pending_downlinks.zig");
 const packets = @import("udp_packets.zig");
+const udp_transport = @import("udp_transport.zig");
 const App = app_mod.App;
 const Config = app_mod.Config;
 
@@ -28,13 +29,13 @@ pub const DownlinkRequest = packets.DownlinkRequest;
 
 pub const Server = struct {
     app: *App,
-    sock: posix.socket_t,
+    socket: udp_transport.Socket,
     pending: pending_downlinks.Tracker,
 
-    pub fn init(app: *App, sock: posix.socket_t) Server {
+    pub fn init(app: *App, socket: udp_transport.Socket) Server {
         return .{
             .app = app,
-            .sock = sock,
+            .socket = socket,
             .pending = pending_downlinks.Tracker.init(app.allocator),
         };
     }
@@ -46,37 +47,21 @@ pub const Server = struct {
 
 pub fn serverMain(app: *App, runtime_config: *const Config) !void {
     const sock = try initServerSocket(runtime_config);
-    defer posix.close(sock);
+    defer sock.close();
 
     var server = Server.init(app, sock);
     defer server.deinit();
     while (true) try drainReady(&server);
 }
 
-pub fn sendDownlink(app: *App, sock: posix.socket_t, gateway_mac: [8]u8, req: DownlinkRequest) !u16 {
-    var server = Server.init(app, sock);
+pub fn sendDownlink(app: *App, socket: udp_transport.Socket, gateway_mac: [8]u8, req: DownlinkRequest) !u16 {
+    var server = Server.init(app, socket);
     defer server.deinit();
     return sendDownlinkWithServer(&server, gateway_mac, req);
 }
 
-pub fn initServerSocket(runtime_config: *const Config) !posix.socket_t {
-    const sock = try posix.socket(posix.AF.INET, posix.SOCK.DGRAM, 0);
-    errdefer posix.close(sock);
-
-    try setNonBlocking(sock);
-
-    const enable: c_int = 1;
-    try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.REUSEADDR, std.mem.asBytes(&enable));
-
-    var addr = posix.sockaddr.in{
-        .family = posix.AF.INET,
-        .port = std.mem.nativeToBig(u16, runtime_config.udp_port),
-        .addr = 0,
-        .zero = [_]u8{0} ** 8,
-    };
-
-    try posix.bind(sock, @ptrCast(&addr), @sizeOf(@TypeOf(addr)));
-
+pub fn initServerSocket(runtime_config: *const Config) !udp_transport.Socket {
+    const sock = try udp_transport.Socket.initServer(runtime_config);
     logger.info("udp", "listener_started", "udp listener started", .{
         .bind_address = runtime_config.bind_address,
         .port = runtime_config.udp_port,
@@ -89,15 +74,8 @@ pub fn drainReady(server: *Server) !void {
     var buf: [4096]u8 = undefined;
 
     while (true) {
-        var client_addr: posix.sockaddr.in = undefined;
-        var client_len: posix.socklen_t = @sizeOf(posix.sockaddr.in);
-
-        const n = posix.recvfrom(server.sock, buf[0..], 0, @ptrCast(&client_addr), &client_len) catch |err| switch (err) {
-            error.WouldBlock => return,
-            else => return err,
-        };
-
-        try handleDatagram(server, client_addr, client_len, buf[0..n]);
+        const datagram = (try server.socket.recvFrom(buf[0..])) orelse return;
+        try handleDatagram(server, datagram.client_addr, datagram.client_len, buf[0..datagram.len]);
     }
 }
 
@@ -156,11 +134,6 @@ fn handleUdpPacket(context: *UdpPacketContext) !void {
     }
 }
 
-fn setNonBlocking(sock: posix.socket_t) !void {
-    const flags = try posix.fcntl(sock, posix.F.GETFL, 0);
-    _ = try posix.fcntl(sock, posix.F.SETFL, flags | posix.SOCK.NONBLOCK);
-}
-
 fn handlePushData(context: *UdpPacketContext, version: u8, token: u16) !void {
     if (context.msg.len < 12) {
         logger.warn("udp", "push_data_short", "push data packet too short", .{
@@ -170,7 +143,7 @@ fn handlePushData(context: *UdpPacketContext, version: u8, token: u16) !void {
         return;
     }
 
-    try sendAck(context.server.sock, &context.client_addr, context.client_len, version, token, packets.push_ack_ident);
+    try sendAck(&context.server.socket, &context.client_addr, context.client_len, version, token, packets.push_ack_ident);
 
     var frame = packets.decodeFrame(context.server.app.allocator, context.msg) catch |err| {
         logger.err("udp", "push_data_decode_failed", "failed to decode push data frame", .{
@@ -207,7 +180,7 @@ fn handlePullData(context: *UdpPacketContext, version: u8, token: u16) !void {
     }
 
     const gateway_mac = packets.parseGatewayMac(context.msg[4..12].*);
-    try sendAck(context.server.sock, &context.client_addr, context.client_len, version, token, packets.pull_ack_ident);
+    try sendAck(&context.server.socket, &context.client_addr, context.client_len, version, token, packets.pull_ack_ident);
     try gateway_state.updatePullTarget(context.server.app, gateway_mac, version, &context.client_addr);
 }
 
@@ -276,17 +249,17 @@ fn sendDownlinkWithServer(server: *Server, gateway_mac: [8]u8, req: DownlinkRequ
     const payload = try packets.encodePullResp(server.app.allocator, packets.semtech_version, token, txpk_json);
     defer server.app.allocator.free(payload);
 
-    _ = try posix.sendto(server.sock, payload, 0, @ptrCast(&target.addr), @sizeOf(posix.sockaddr.in));
+    try server.socket.sendTo(&target.addr, @sizeOf(posix.sockaddr.in), payload);
 
     try server.pending.remember(token, gateway_mac, req.dev_addr);
     try gateway_state.updatePending(server.app, gateway_mac, token, txpk_json);
     return token;
 }
 
-fn sendAck(sock: posix.socket_t, client_addr: *const posix.sockaddr.in, client_len: posix.socklen_t, version: u8, token: u16, ident: u8) !void {
+fn sendAck(socket: *const udp_transport.Socket, client_addr: *const posix.sockaddr.in, client_len: posix.socklen_t, version: u8, token: u16, ident: u8) !void {
     var ack_buf: [4]u8 = undefined;
     ack_buf[0] = version;
     std.mem.writeInt(u16, ack_buf[1..3], token, .big);
     ack_buf[3] = ident;
-    _ = try posix.sendto(sock, &ack_buf, 0, @ptrCast(client_addr), client_len);
+    try socket.sendTo(client_addr, client_len, &ack_buf);
 }

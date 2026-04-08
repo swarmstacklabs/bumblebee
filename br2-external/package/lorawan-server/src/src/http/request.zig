@@ -1,4 +1,5 @@
 const std = @import("std");
+const http_transport = @import("../http_transport.zig");
 
 pub const Method = enum {
     GET,
@@ -61,6 +62,12 @@ pub fn parse(raw: []const u8, body_start: usize, header_buf: []Header) !Request 
         .body = raw[body_start..],
         .headers = header_buf[0..header_count],
     };
+}
+
+pub fn parseConnection(conn: *const http_transport.Connection, header_buf: []Header) !Request {
+    const raw = conn.requestBytes() orelse return error.IncompleteRequest;
+    const body_start = conn.header_end orelse return error.IncompleteRequest;
+    return parse(raw, body_start, header_buf);
 }
 
 pub fn parseMethod(value: []const u8) Method {
