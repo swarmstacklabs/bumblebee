@@ -6,6 +6,9 @@ const context_mod = @import("../context.zig");
 pub fn list(ctx: *context_mod.Context) !void {
     const repo = ctx.services.device_repo;
     const devices = try repo.list(ctx.allocator);
+
+    std.mem.reverse(app_mod.DeviceRecord, devices);
+
     defer {
         for (devices) |device| device.deinit(ctx.allocator);
         ctx.allocator.free(devices);
