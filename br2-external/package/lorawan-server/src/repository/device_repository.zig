@@ -2,23 +2,23 @@ const std = @import("std");
 
 const app_mod = @import("../app.zig");
 const sqlite = @import("../sqlite_helpers.zig");
-const App = app_mod.App;
+const Database = app_mod.Database;
 const DeviceJson = app_mod.DeviceJson;
 const DevicePayload = app_mod.DevicePayload;
 
 pub const Repository = struct {
-    app: *App,
+    db: Database,
 
-    pub fn init(app: *App) Repository {
-        return .{ .app = app };
+    pub fn init(db: Database) Repository {
+        return .{ .db = db };
     }
 
     pub fn list(self: Repository, allocator: std.mem.Allocator) ![]DeviceJson {
-        self.app.mutex.lock();
-        defer self.app.mutex.unlock();
+        self.db.mutex.lock();
+        defer self.db.mutex.unlock();
 
         const sql = "SELECT id, name, dev_eui, app_eui, app_key, created_at, updated_at FROM devices ORDER BY id DESC;";
-        const stmt = try sqlite.Statement.prepare(self.app.db, sql);
+        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
         defer stmt.deinit();
 
         var out = std.ArrayList(DeviceJson){};
@@ -35,11 +35,11 @@ pub const Repository = struct {
     }
 
     pub fn get(self: Repository, allocator: std.mem.Allocator, id: i64) !?DeviceJson {
-        self.app.mutex.lock();
-        defer self.app.mutex.unlock();
+        self.db.mutex.lock();
+        defer self.db.mutex.unlock();
 
         const sql = "SELECT id, name, dev_eui, app_eui, app_key, created_at, updated_at FROM devices WHERE id = ?;";
-        const stmt = try sqlite.Statement.prepare(self.app.db, sql);
+        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
         defer stmt.deinit();
 
         stmt.bindInt64(1, id);
@@ -49,11 +49,11 @@ pub const Repository = struct {
     }
 
     pub fn create(self: Repository, payload: DevicePayload) !void {
-        self.app.mutex.lock();
-        defer self.app.mutex.unlock();
+        self.db.mutex.lock();
+        defer self.db.mutex.unlock();
 
         const sql = "INSERT INTO devices(name, dev_eui, app_eui, app_key) VALUES(?, ?, ?, ?);";
-        const stmt = try sqlite.Statement.prepare(self.app.db, sql);
+        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
         defer stmt.deinit();
 
         stmt.bindText(1, payload.name);
@@ -65,14 +65,14 @@ pub const Repository = struct {
     }
 
     pub fn update(self: Repository, id: i64, payload: DevicePayload) !bool {
-        self.app.mutex.lock();
-        defer self.app.mutex.unlock();
+        self.db.mutex.lock();
+        defer self.db.mutex.unlock();
 
         const sql =
             "UPDATE devices " ++
             "SET name = ?, dev_eui = ?, app_eui = ?, app_key = ?, updated_at = CURRENT_TIMESTAMP " ++
             "WHERE id = ?;";
-        const stmt = try sqlite.Statement.prepare(self.app.db, sql);
+        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
         defer stmt.deinit();
 
         stmt.bindText(1, payload.name);
@@ -82,20 +82,20 @@ pub const Repository = struct {
         stmt.bindInt64(5, id);
 
         stmt.expectDone() catch return error.DeviceUpdateFailed;
-        return sqlite.changes(self.app.db) != 0;
+        return sqlite.changes(self.db.db) != 0;
     }
 
     pub fn delete(self: Repository, id: i64) !bool {
-        self.app.mutex.lock();
-        defer self.app.mutex.unlock();
+        self.db.mutex.lock();
+        defer self.db.mutex.unlock();
 
         const sql = "DELETE FROM devices WHERE id = ?;";
-        const stmt = try sqlite.Statement.prepare(self.app.db, sql);
+        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
         defer stmt.deinit();
 
         stmt.bindInt64(1, id);
         stmt.expectDone() catch return error.DeviceDeleteFailed;
-        return sqlite.changes(self.app.db) != 0;
+        return sqlite.changes(self.db.db) != 0;
     }
 };
 
@@ -115,4 +115,3 @@ fn dupColumnText(allocator: std.mem.Allocator, stmt: sqlite.Statement, column: c
     const value = stmt.readText(column) orelse return allocator.alloc(u8, 0);
     return allocator.dupe(u8, value);
 }
-

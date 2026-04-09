@@ -17,4 +17,5 @@ pub const StatusResponse = storage.StatusResponse;
 pub const ErrorResponse = storage.ErrorResponse;
 pub const DeviceJson = storage.DeviceJson;
 pub const DevicePayload = storage.DevicePayload;
+pub const Database = storage.Database;
 pub const App = storage.App;

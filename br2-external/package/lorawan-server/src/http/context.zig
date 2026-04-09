@@ -1,8 +1,8 @@
 const std = @import("std");
 
-const app_mod = @import("../app.zig");
 const request_mod = @import("request.zig");
 const response_mod = @import("response.zig");
+const services_mod = @import("services.zig");
 
 pub const RouteParam = struct {
     name: []const u8,
@@ -11,8 +11,7 @@ pub const RouteParam = struct {
 
 pub const Context = struct {
     allocator: std.mem.Allocator,
-    app: *app_mod.App,
-    config: *const app_mod.Config,
+    services: services_mod.Services,
     req: request_mod.Request,
     res: response_mod.Response,
     user_id: ?[]const u8 = null,
@@ -21,14 +20,12 @@ pub const Context = struct {
 
     pub fn init(
         allocator: std.mem.Allocator,
-        app: *app_mod.App,
-        config: *const app_mod.Config,
+        services: services_mod.Services,
         req: request_mod.Request,
     ) Context {
         return .{
             .allocator = allocator,
-            .app = app,
-            .config = config,
+            .services = services,
             .req = req,
             .res = response_mod.Response.init(allocator),
         };

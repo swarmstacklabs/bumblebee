@@ -5,45 +5,58 @@ const app_mod = @import("../app.zig");
 const event_repository = @import("../repository/event_repository.zig");
 const gateway_repository = @import("../repository/gateway_repository.zig");
 const App = app_mod.App;
+const Database = app_mod.Database;
 
 pub const GatewayTarget = gateway_repository.GatewayTarget;
 pub const RuntimeRecord = gateway_repository.RuntimeRecord;
 
-pub fn touch(app: *App, gateway_mac: [8]u8, version: u8, client_addr: *const posix.sockaddr.in) !void {
-    try gateway_repository.Repository.init(app).upsertRuntime(gateway_mac, version, client_addr, null, null);
-}
+pub const Registry = struct {
+    gateway_repo: gateway_repository.Repository,
+    event_repo: event_repository.Repository,
 
-pub fn rememberPullTarget(app: *App, gateway_mac: [8]u8, version: u8, client_addr: *const posix.sockaddr.in) !void {
-    try gateway_repository.Repository.init(app).upsertRuntime(gateway_mac, version, client_addr, null, null);
-}
+    pub fn init(db: Database) Registry {
+        return .{
+            .gateway_repo = gateway_repository.Repository.init(db),
+            .event_repo = event_repository.Repository.init(db),
+        };
+    }
 
-pub fn rememberPending(app: *App, gateway_mac: [8]u8, token: u16, txpk_json: []const u8) !void {
-    try gateway_repository.Repository.init(app).rememberPending(gateway_mac, token, txpk_json);
-}
+    pub fn touch(self: Registry, gateway_mac: [8]u8, version: u8, client_addr: *const posix.sockaddr.in) !void {
+        try self.gateway_repo.upsertRuntime(gateway_mac, version, client_addr, null, null);
+    }
 
-pub fn clearPending(app: *App, gateway_mac: [8]u8, token: u16) !void {
-    try gateway_repository.Repository.init(app).clearPending(gateway_mac, token);
-}
+    pub fn rememberPullTarget(self: Registry, gateway_mac: [8]u8, version: u8, client_addr: *const posix.sockaddr.in) !void {
+        try self.gateway_repo.upsertRuntime(gateway_mac, version, client_addr, null, null);
+    }
 
-pub fn insertEvent(app: *App, event_type: []const u8, gateway_mac: [8]u8, payload_json: []u8) !void {
-    try event_repository.Repository.init(app).insertGatewayEvent(event_type, gateway_mac, payload_json);
-}
+    pub fn rememberPending(self: Registry, gateway_mac: [8]u8, token: u16, txpk_json: []const u8) !void {
+        try self.gateway_repo.rememberPending(gateway_mac, token, txpk_json);
+    }
 
-pub fn readTarget(app: *App, gateway_mac: [8]u8) !GatewayTarget {
-    return gateway_repository.Repository.init(app).readTarget(gateway_mac);
-}
+    pub fn clearPending(self: Registry, gateway_mac: [8]u8, token: u16) !void {
+        try self.gateway_repo.clearPending(gateway_mac, token);
+    }
 
-pub fn get(app: *App, gateway_mac: [8]u8) !?RuntimeRecord {
-    return gateway_repository.Repository.init(app).get(gateway_mac);
-}
+    pub fn insertEvent(self: Registry, event_type: []const u8, gateway_mac: [8]u8, payload_json: []u8) !void {
+        try self.event_repo.insertGatewayEvent(event_type, gateway_mac, payload_json);
+    }
 
-pub fn list(app: *App, allocator: std.mem.Allocator) ![]RuntimeRecord {
-    return gateway_repository.Repository.init(app).list(allocator);
-}
+    pub fn readTarget(self: Registry, gateway_mac: [8]u8) !GatewayTarget {
+        return self.gateway_repo.readTarget(gateway_mac);
+    }
 
-pub fn countPending(app: *App, gateway_mac: [8]u8) !i64 {
-    return gateway_repository.Repository.init(app).countPending(gateway_mac);
-}
+    pub fn get(self: Registry, gateway_mac: [8]u8) !?RuntimeRecord {
+        return self.gateway_repo.get(gateway_mac);
+    }
+
+    pub fn list(self: Registry, allocator: std.mem.Allocator) ![]RuntimeRecord {
+        return self.gateway_repo.list(allocator);
+    }
+
+    pub fn countPending(self: Registry, gateway_mac: [8]u8) !i64 {
+        return self.gateway_repo.countPending(gateway_mac);
+    }
+};
 
 test "registry stores pull target with semtech version" {
     const allocator = std.testing.allocator;
@@ -58,9 +71,10 @@ test "registry stores pull target with semtech version" {
         .zero = [_]u8{0} ** 8,
     };
 
-    try rememberPullTarget(&app.app, gateway_mac, 1, &client_addr);
+    const registry = Registry.init(app.app.database());
+    try registry.rememberPullTarget(gateway_mac, 1, &client_addr);
 
-    const target = try readTarget(&app.app, gateway_mac);
+    const target = try registry.readTarget(gateway_mac);
     defer target.deinit(allocator);
 
     try std.testing.expectEqual(@as(?u8, 1), target.semtech_version);
@@ -81,17 +95,18 @@ test "registry lists runtime snapshots and clears pending state" {
         .zero = [_]u8{0} ** 8,
     };
 
-    try touch(&app.app, gateway_mac, 1, &client_addr);
-    try rememberPending(&app.app, gateway_mac, 0xCAFE, "{\"txpk\":{}}");
+    const registry = Registry.init(app.app.database());
+    try registry.touch(gateway_mac, 1, &client_addr);
+    try registry.rememberPending(gateway_mac, 0xCAFE, "{\"txpk\":{}}");
 
-    const before = (try get(&app.app, gateway_mac)).?;
+    const before = (try registry.get(gateway_mac)).?;
     defer before.deinit(allocator);
     try std.testing.expectEqual(@as(?u16, 0xCAFE), before.pending_downlink_token);
     try std.testing.expectEqualStrings("10.0.0.5", before.peer_address.?);
 
-    try clearPending(&app.app, gateway_mac, 0xCAFE);
+    try registry.clearPending(gateway_mac, 0xCAFE);
 
-    const snapshots = try list(&app.app, allocator);
+    const snapshots = try registry.list(allocator);
     defer {
         for (snapshots) |item| item.deinit(allocator);
         allocator.free(snapshots);

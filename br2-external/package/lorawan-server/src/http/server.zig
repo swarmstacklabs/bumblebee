@@ -8,6 +8,7 @@ const pipeline = @import("pipeline.zig");
 const request_mod = @import("request.zig");
 const router_mod = @import("router.zig");
 const runtime = @import("runtime.zig");
+const services_mod = @import("services.zig");
 
 const home_handler = @import("handlers/home.zig");
 const health_handler = @import("handlers/health.zig");
@@ -123,7 +124,8 @@ pub fn serviceReadyClient(app: *App, runtime_config: *const Config, conn: *Conne
             var header_buf: [32]request_mod.Header = undefined;
             const req = try request_mod.parseConnection(conn, &header_buf);
 
-            var ctx = context_mod.Context.init(app.allocator, app, runtime_config, req);
+            const services = services_mod.Services.init(app, runtime_config);
+            var ctx = context_mod.Context.init(app.allocator, services, req);
             defer ctx.deinit();
 
             dispatcher.handle(&ctx) catch |err| {

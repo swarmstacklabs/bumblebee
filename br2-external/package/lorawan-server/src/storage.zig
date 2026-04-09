@@ -48,6 +48,12 @@ pub const DevicePayload = struct {
     }
 };
 
+pub const Database = struct {
+    allocator: std.mem.Allocator,
+    db: *c.sqlite3,
+    mutex: *std.Thread.Mutex,
+};
+
 pub const App = struct {
     allocator: std.mem.Allocator,
     db: *c.sqlite3,
@@ -83,6 +89,14 @@ pub const App = struct {
     pub fn deinit(self: *App) void {
         self.pending_downlinks.deinit();
         _ = c.sqlite3_close(self.db);
+    }
+
+    pub fn database(self: *App) Database {
+        return .{
+            .allocator = self.allocator,
+            .db = self.db,
+            .mutex = &self.mutex,
+        };
     }
 
     pub fn exec(self: *App, sql: []const u8) !void {

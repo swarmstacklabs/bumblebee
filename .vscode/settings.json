@@ -6,13 +6,13 @@
     "-lsqlite3",
     "--test-filter",
     "${filter}",
-    "/home/vnareiko/Homespace/bumblebee/br2-external/package/lorawan-server/src/src/test_root.zig"
+    "/home/vnareiko/Homespace/bumblebee/br2-external/package/lorawan-server/src/test_root.zig"
   ],
   "zig.debugTestArgs": [
     "test",
     "-lc",
     "-lsqlite3",
-    "/home/vnareiko/Homespace/bumblebee/br2-external/package/lorawan-server/src/src/test_root.zig",
+    "/home/vnareiko/Homespace/bumblebee/br2-external/package/lorawan-server/src/test_root.zig",
     "--test-filter",
     "${filter}",
     "--test-no-exec",

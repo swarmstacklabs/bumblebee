@@ -2,10 +2,9 @@ const std = @import("std");
 
 const app_mod = @import("../../app.zig");
 const context_mod = @import("../context.zig");
-const device_repository = @import("../../repository/device_repository.zig");
 
 pub fn list(ctx: *context_mod.Context) !void {
-    const repo = device_repository.Repository.init(ctx.app);
+    const repo = ctx.services.device_repo;
     const devices = try repo.list(ctx.allocator);
     defer {
         for (devices) |device| device.deinit(ctx.allocator);
@@ -32,7 +31,7 @@ pub fn list(ctx: *context_mod.Context) !void {
 
 pub fn get(ctx: *context_mod.Context) !void {
     const id = try parseRouteId(ctx);
-    const repo = device_repository.Repository.init(ctx.app);
+    const repo = ctx.services.device_repo;
     const maybe_device = try repo.get(ctx.allocator, id);
     if (maybe_device == null) {
         try ctx.res.setJsonStatus(404, app_mod.ErrorResponse{ .@"error" = "device not found" });
@@ -48,7 +47,7 @@ pub fn create(ctx: *context_mod.Context) !void {
     const payload = try parseDevicePayload(ctx, ctx.req.body);
     defer payload.deinit(ctx.allocator);
 
-    const repo = device_repository.Repository.init(ctx.app);
+    const repo = ctx.services.device_repo;
     repo.create(payload) catch {
         try ctx.res.setJsonStatus(409, app_mod.ErrorResponse{ .@"error" = "device already exists or could not be created" });
         return;
@@ -62,7 +61,7 @@ pub fn update(ctx: *context_mod.Context) !void {
     const payload = try parseDevicePayload(ctx, ctx.req.body);
     defer payload.deinit(ctx.allocator);
 
-    const repo = device_repository.Repository.init(ctx.app);
+    const repo = ctx.services.device_repo;
     const updated = try repo.update(id, payload);
     if (!updated) {
         try ctx.res.setJsonStatus(404, app_mod.ErrorResponse{ .@"error" = "device not found" });
@@ -74,7 +73,7 @@ pub fn update(ctx: *context_mod.Context) !void {
 
 pub fn delete(ctx: *context_mod.Context) !void {
     const id = try parseRouteId(ctx);
-    const repo = device_repository.Repository.init(ctx.app);
+    const repo = ctx.services.device_repo;
     const deleted = try repo.delete(id);
     if (!deleted) {
         try ctx.res.setJsonStatus(404, app_mod.ErrorResponse{ .@"error" = "device not found" });

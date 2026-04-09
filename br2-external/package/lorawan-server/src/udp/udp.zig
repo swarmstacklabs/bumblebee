@@ -153,12 +153,14 @@ fn handlePushData(context: *UdpPacketContext, version: u8, token: u16) !void {
         else => return,
     };
 
-    try gateway_registry.touch(context.server.app, push.gateway_mac, version, &context.client_addr);
+    const registry = gateway_registry.Registry.init(context.server.app.database());
+    const lorawan_service = lorawan.service.Service.init(context.server.app.database());
+    try registry.touch(push.gateway_mac, version, &context.client_addr);
 
     for (push.rxpk.items) |rxpk| {
-        try gateway_registry.insertEvent(context.server.app, "gateway_rxpk", push.gateway_mac, try packets.encodeNormalizedRxpk(context.server.app.allocator, push.gateway_mac, rxpk));
+        try registry.insertEvent("gateway_rxpk", push.gateway_mac, try packets.encodeNormalizedRxpk(context.server.app.allocator, push.gateway_mac, rxpk));
 
-        const maybe_ingested = lorawan.service.ingestRxpk(context.server.app, context.server.app.allocator, push.gateway_mac, rxpk) catch |err| blk: {
+        const maybe_ingested = lorawan_service.ingestRxpk(context.server.app.allocator, push.gateway_mac, rxpk) catch |err| blk: {
             logger.warn("udp", "lorawan_ingest_failed", "failed to ingest LoRaWAN uplink", .{
                 .gateway_mac = packets.gatewayMacHex(push.gateway_mac),
                 .error_name = @errorName(err),
@@ -169,7 +171,7 @@ fn handlePushData(context: *UdpPacketContext, version: u8, token: u16) !void {
         if (maybe_ingested) |ingested| {
             defer ingested.deinit(context.server.app.allocator);
 
-            try gateway_registry.insertEvent(context.server.app, ingested.event_type, push.gateway_mac, try context.server.app.allocator.dupe(u8, ingested.event_json));
+            try registry.insertEvent(ingested.event_type, push.gateway_mac, try context.server.app.allocator.dupe(u8, ingested.event_json));
 
             if (ingested.downlink) |downlink| {
                 _ = sendDownlinkWithServer(context.server, push.gateway_mac, downlink) catch |err| {
@@ -184,7 +186,7 @@ fn handlePushData(context: *UdpPacketContext, version: u8, token: u16) !void {
     }
 
     if (push.stat) |stat| {
-        try gateway_registry.insertEvent(context.server.app, "gateway_stat", push.gateway_mac, stat.json);
+        try registry.insertEvent("gateway_stat", push.gateway_mac, try context.server.app.allocator.dupe(u8, stat.json));
     }
 }
 
@@ -199,7 +201,8 @@ fn handlePullData(context: *UdpPacketContext, version: u8, token: u16) !void {
 
     const gateway_mac = packets.parseGatewayMac(context.msg[4..12].*);
     try sendAck(&context.server.socket, &context.client_addr, context.client_len, version, token, packets.pull_ack_ident);
-    try gateway_registry.rememberPullTarget(context.server.app, gateway_mac, version, &context.client_addr);
+    const registry = gateway_registry.Registry.init(context.server.app.database());
+    try registry.rememberPullTarget(gateway_mac, version, &context.client_addr);
 }
 
 fn handleTxAck(context: *UdpPacketContext, version: u8, token: u16) !void {
@@ -234,9 +237,10 @@ fn handleTxAck(context: *UdpPacketContext, version: u8, token: u16) !void {
     const delay_ms = std.time.milliTimestamp() - pending.sent_at_ms;
     const status = if (ack.error_name) |value| value else "NONE";
 
-    try gateway_registry.clearPending(context.server.app, ack.gateway_mac, ack.token);
+    const registry = gateway_registry.Registry.init(context.server.app.database());
+    try registry.clearPending(ack.gateway_mac, ack.token);
 
-    try gateway_registry.insertEvent(context.server.app, "gateway_tx_ack", ack.gateway_mac, try packets.encodeTxAckEvent(
+    try registry.insertEvent("gateway_tx_ack", ack.gateway_mac, try packets.encodeTxAckEvent(
         context.server.app.allocator,
         ack.gateway_mac,
         ack.token,
@@ -259,12 +263,13 @@ fn handleTxAck(context: *UdpPacketContext, version: u8, token: u16) !void {
 fn sendDownlinkWithServer(server: *Server, gateway_mac: [8]u8, req: DownlinkRequest) !u16 {
     server.app.pending_downlinks.pruneExpired();
 
-    const target = try gateway_registry.readTarget(server.app, gateway_mac);
+    const registry = gateway_registry.Registry.init(server.app.database());
+    const target = try registry.readTarget(gateway_mac);
     defer target.deinit(server.app.allocator);
 
     const token = pending_downlinks.randomToken();
     const txpk_json = try packets.buildPullRespJson(server.app.allocator, req);
-    errdefer server.app.allocator.free(txpk_json);
+    defer server.app.allocator.free(txpk_json);
 
     const payload = try packets.encodePullResp(server.app.allocator, packets.semtech_version, token, txpk_json);
     defer server.app.allocator.free(payload);
@@ -272,7 +277,7 @@ fn sendDownlinkWithServer(server: *Server, gateway_mac: [8]u8, req: DownlinkRequ
     try server.socket.sendTo(&target.addr, @sizeOf(posix.sockaddr.in), payload);
 
     try server.app.pending_downlinks.remember(gateway_mac, token, req.dev_addr);
-    try gateway_registry.rememberPending(server.app, gateway_mac, token, txpk_json);
+    try registry.rememberPending(gateway_mac, token, txpk_json);
     return token;
 }
 
@@ -305,7 +310,8 @@ test "pull data sends pull ack and stores gateway target" {
         packets.pull_ack_ident,
     }, ack);
 
-    const target = try gateway_registry.readTarget(&harness.app, fixture.gateway_mac);
+    const registry = gateway_registry.Registry.init(harness.app.database());
+    const target = try registry.readTarget(fixture.gateway_mac);
     defer target.deinit(allocator);
 
     try std.testing.expectEqual(harness.client_port, std.mem.bigToNative(u16, target.addr.port));
@@ -320,7 +326,9 @@ test "forwarder fixture push data sends ack and records rxpk event" {
     var server = harness.server();
 
     const fixture = ForwarderFixture{};
-    const push_data = try fixture.pushDataWithJson(allocator, 0xABCD, try fixture.rxpkPayloadJson(allocator, "AQID", 42));
+    const rxpk_json = try fixture.rxpkPayloadJson(allocator, "AQID", 42);
+    defer allocator.free(rxpk_json);
+    const push_data = try fixture.pushDataWithJson(allocator, 0xABCD, rxpk_json);
     defer allocator.free(push_data);
 
     try harness.sendFromClient(push_data);
@@ -405,7 +413,9 @@ test "forwarder fixture push and pull flow yields pull resp and tx ack clears pe
     const pull_ack = try harness.recvOnClient();
     defer allocator.free(pull_ack);
 
-    const push_data = try fixture.pushDataWithJson(allocator, 0x2222, try fixture.rxpkPayloadJson(allocator, "AQID", 7));
+    const rxpk_json = try fixture.rxpkPayloadJson(allocator, "AQID", 7);
+    defer allocator.free(rxpk_json);
+    const push_data = try fixture.pushDataWithJson(allocator, 0x2222, rxpk_json);
     defer allocator.free(push_data);
 
     try harness.sendFromClient(push_data);
@@ -665,11 +675,11 @@ fn ipv4(a: u8, b: u8, c: u8, d: u8) u32 {
 }
 
 fn countEvents(app: *App, event_type: []const u8) !i64 {
-    return event_repository.Repository.init(app).countByType(event_type);
+    return event_repository.Repository.init(app.database()).countByType(event_type);
 }
 
 fn countPendingTokens(app: *App, gateway_mac: [8]u8) !i64 {
-    return gateway_registry.countPending(app, gateway_mac);
+    return gateway_registry.Registry.init(app.database()).countPending(gateway_mac);
 }
 
 fn expectPullRespTmst(allocator: std.mem.Allocator, json_payload: []const u8, expected_tmst: i64) !void {
