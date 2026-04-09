@@ -79,7 +79,7 @@ pub const ErrorResponse = struct {
     @"error": []const u8,
 };
 
-pub const DeviceJson = struct {
+pub const DeviceRecord = struct {
     id: i64,
     name: []const u8,
     dev_eui: []const u8,
@@ -88,7 +88,7 @@ pub const DeviceJson = struct {
     created_at: []const u8,
     updated_at: []const u8,
 
-    pub fn deinit(self: DeviceJson, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: DeviceRecord, allocator: std.mem.Allocator) void {
         allocator.free(self.name);
         allocator.free(self.dev_eui);
         allocator.free(self.app_eui);
@@ -98,13 +98,13 @@ pub const DeviceJson = struct {
     }
 };
 
-pub const DevicePayload = struct {
+pub const DeviceWriteInput = struct {
     name: []const u8,
     dev_eui: []const u8,
     app_eui: []const u8,
     app_key: []const u8,
 
-    pub fn deinit(self: DevicePayload, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: DeviceWriteInput, allocator: std.mem.Allocator) void {
         allocator.free(self.name);
         allocator.free(self.dev_eui);
         allocator.free(self.app_eui);

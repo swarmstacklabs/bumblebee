@@ -44,11 +44,11 @@ pub fn get(ctx: *context_mod.Context) !void {
 }
 
 pub fn create(ctx: *context_mod.Context) !void {
-    const payload = try parseDevicePayload(ctx, ctx.req.body);
-    defer payload.deinit(ctx.allocator);
+    const write_input = try parseDeviceWriteInput(ctx, ctx.req.body);
+    defer write_input.deinit(ctx.allocator);
 
     const repo = ctx.services.device_repo;
-    repo.create(payload) catch {
+    repo.create(write_input) catch {
         try ctx.res.setJsonStatus(409, app_mod.ErrorResponse{ .@"error" = "device already exists or could not be created" });
         return;
     };
@@ -58,11 +58,11 @@ pub fn create(ctx: *context_mod.Context) !void {
 
 pub fn update(ctx: *context_mod.Context) !void {
     const id = try parseRouteId(ctx);
-    const payload = try parseDevicePayload(ctx, ctx.req.body);
-    defer payload.deinit(ctx.allocator);
+    const write_input = try parseDeviceWriteInput(ctx, ctx.req.body);
+    defer write_input.deinit(ctx.allocator);
 
     const repo = ctx.services.device_repo;
-    const updated = try repo.update(id, payload);
+    const updated = try repo.update(id, write_input);
     if (!updated) {
         try ctx.res.setJsonStatus(404, app_mod.ErrorResponse{ .@"error" = "device not found" });
         return;
@@ -83,8 +83,8 @@ pub fn delete(ctx: *context_mod.Context) !void {
     try ctx.res.setJson(app_mod.StatusResponse{ .status = "deleted" });
 }
 
-fn parseDevicePayload(ctx: *context_mod.Context, body: []const u8) !app_mod.DevicePayload {
-    const parsed = try std.json.parseFromSlice(app_mod.DevicePayload, ctx.allocator, body, .{
+fn parseDeviceWriteInput(ctx: *context_mod.Context, body: []const u8) !app_mod.DeviceWriteInput {
+    const parsed = try std.json.parseFromSlice(app_mod.DeviceWriteInput, ctx.allocator, body, .{
         .ignore_unknown_fields = true,
     });
     defer parsed.deinit();

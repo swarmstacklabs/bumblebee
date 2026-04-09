@@ -4,10 +4,10 @@ const app_mod = @import("../app.zig");
 const crud_repository = @import("crud_repository.zig");
 const storage = @import("../storage.zig");
 const Database = app_mod.Database;
-const DeviceJson = app_mod.DeviceJson;
-const DevicePayload = app_mod.DevicePayload;
+const DeviceRecord = app_mod.DeviceRecord;
+const DeviceWriteInput = app_mod.DeviceWriteInput;
 
-pub const CRUDRepository = crud_repository.Interface(DeviceJson, DevicePayload, i64);
+pub const CRUDRepository = crud_repository.Interface(DeviceRecord, DeviceWriteInput, i64);
 
 pub const Repository = struct {
     db: Database,
@@ -16,7 +16,7 @@ pub const Repository = struct {
         return .{ .db = db };
     }
 
-    pub fn list(self: Repository, allocator: std.mem.Allocator) ![]DeviceJson {
+    pub fn list(self: Repository, allocator: std.mem.Allocator) ![]DeviceRecord {
         self.db.mutex.lock();
         defer self.db.mutex.unlock();
 
@@ -24,7 +24,7 @@ pub const Repository = struct {
         const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
 
-        var out = std.ArrayList(DeviceJson){};
+        var out = std.ArrayList(DeviceRecord){};
         errdefer {
             for (out.items) |item| item.deinit(allocator);
             out.deinit(allocator);
@@ -37,7 +37,7 @@ pub const Repository = struct {
         return out.toOwnedSlice(allocator);
     }
 
-    pub fn get(self: Repository, allocator: std.mem.Allocator, id: i64) !?DeviceJson {
+    pub fn get(self: Repository, allocator: std.mem.Allocator, id: i64) !?DeviceRecord {
         self.db.mutex.lock();
         defer self.db.mutex.unlock();
 
@@ -51,7 +51,7 @@ pub const Repository = struct {
         return try rowToDevice(allocator, stmt);
     }
 
-    pub fn create(self: Repository, payload: DevicePayload) !void {
+    pub fn create(self: Repository, write_input: DeviceWriteInput) !void {
         self.db.mutex.lock();
         defer self.db.mutex.unlock();
 
@@ -59,15 +59,15 @@ pub const Repository = struct {
         const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
 
-        stmt.bindText(1, payload.name);
-        stmt.bindText(2, payload.dev_eui);
-        stmt.bindText(3, payload.app_eui);
-        stmt.bindText(4, payload.app_key);
+        stmt.bindText(1, write_input.name);
+        stmt.bindText(2, write_input.dev_eui);
+        stmt.bindText(3, write_input.app_eui);
+        stmt.bindText(4, write_input.app_key);
 
         stmt.expectDone() catch return error.DeviceCreateFailed;
     }
 
-    pub fn update(self: Repository, id: i64, payload: DevicePayload) !bool {
+    pub fn update(self: Repository, id: i64, write_input: DeviceWriteInput) !bool {
         self.db.mutex.lock();
         defer self.db.mutex.unlock();
 
@@ -78,10 +78,10 @@ pub const Repository = struct {
         const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
 
-        stmt.bindText(1, payload.name);
-        stmt.bindText(2, payload.dev_eui);
-        stmt.bindText(3, payload.app_eui);
-        stmt.bindText(4, payload.app_key);
+        stmt.bindText(1, write_input.name);
+        stmt.bindText(2, write_input.dev_eui);
+        stmt.bindText(3, write_input.app_eui);
+        stmt.bindText(4, write_input.app_key);
         stmt.bindInt64(5, id);
 
         stmt.expectDone() catch return error.DeviceUpdateFailed;
@@ -106,7 +106,7 @@ pub fn crud(db: Database) CRUDRepository {
     return CRUDRepository.bind(Repository, db);
 }
 
-fn rowToDevice(allocator: std.mem.Allocator, stmt: storage.Statement) !DeviceJson {
+fn rowToDevice(allocator: std.mem.Allocator, stmt: storage.Statement) !DeviceRecord {
     return .{
         .id = stmt.readInt64(0),
         .name = try dupColumnText(allocator, stmt, 1),
