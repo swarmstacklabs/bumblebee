@@ -1,11 +1,75 @@
 const std = @import("std");
 const logger = @import("logger.zig");
 const pending_downlinks = @import("lorawan/pending_downlinks.zig");
-const sqlite = @import("sqlite_helpers.zig");
 
 pub const c = @cImport({
     @cInclude("sqlite3.h");
 });
+
+pub const Statement = struct {
+    raw: *c.sqlite3_stmt,
+
+    pub fn prepare(db: *c.sqlite3, sql: []const u8) !Statement {
+        var stmt: ?*c.sqlite3_stmt = null;
+        if (c.sqlite3_prepare_v2(db, sql.ptr, @as(c_int, @intCast(sql.len)), &stmt, null) != c.SQLITE_OK) {
+            return error.SqlitePrepareFailed;
+        }
+        return .{ .raw = stmt.? };
+    }
+
+    pub fn deinit(self: Statement) void {
+        _ = c.sqlite3_finalize(self.raw);
+    }
+
+    pub fn bindText(self: Statement, index: c_int, value: []const u8) void {
+        _ = c.sqlite3_bind_text(self.raw, index, value.ptr, @as(c_int, @intCast(value.len)), null);
+    }
+
+    pub fn bindInt(self: Statement, index: c_int, value: anytype) void {
+        _ = c.sqlite3_bind_int(self.raw, index, @as(c_int, @intCast(value)));
+    }
+
+    pub fn bindInt64(self: Statement, index: c_int, value: anytype) void {
+        _ = c.sqlite3_bind_int64(self.raw, index, @as(c.sqlite3_int64, @intCast(value)));
+    }
+
+    pub fn bindNull(self: Statement, index: c_int) void {
+        _ = c.sqlite3_bind_null(self.raw, index);
+    }
+
+    pub fn step(self: Statement) c_int {
+        return c.sqlite3_step(self.raw);
+    }
+
+    pub fn expectDone(self: Statement) !void {
+        if (self.step() != c.SQLITE_DONE) return error.SqliteStepFailed;
+    }
+
+    pub fn expectRow(self: Statement) !void {
+        if (self.step() != c.SQLITE_ROW) return error.SqliteStepFailed;
+    }
+
+    pub fn readInt(self: Statement, column: c_int) c_int {
+        return c.sqlite3_column_int(self.raw, column);
+    }
+
+    pub fn readInt64(self: Statement, column: c_int) i64 {
+        return c.sqlite3_column_int64(self.raw, column);
+    }
+
+    pub fn readText(self: Statement, column: c_int) ?[]const u8 {
+        const value = c.sqlite3_column_text(self.raw, column) orelse return null;
+        return std.mem.span(value);
+    }
+
+    pub fn columnType(self: Statement, column: c_int) c_int {
+        return c.sqlite3_column_type(self.raw, column);
+    }
+};
+
+pub fn changes(db: *c.sqlite3) c_int {
+    return c.sqlite3_changes(db);
+}
 
 pub const StatusResponse = struct {
     status: []const u8,
@@ -50,7 +114,7 @@ pub const DevicePayload = struct {
 
 pub const Database = struct {
     allocator: std.mem.Allocator,
-    db: *c.sqlite3,
+    conn: *c.sqlite3,
     mutex: *std.Thread.Mutex,
 };
 
@@ -94,7 +158,7 @@ pub const App = struct {
     pub fn database(self: *App) Database {
         return .{
             .allocator = self.allocator,
-            .db = self.db,
+            .conn = self.db,
             .mutex = &self.mutex,
         };
     }
@@ -246,7 +310,7 @@ const migrations = [_]Migration{
 
 fn getSchemaVersion(db: *c.sqlite3) !i64 {
     const sql = "SELECT COALESCE(MAX(version), 0) FROM schema_migrations;";
-    const stmt = try sqlite.Statement.prepare(db, sql);
+    const stmt = try Statement.prepare(db, sql);
     defer stmt.deinit();
 
     try stmt.expectRow();
@@ -260,7 +324,7 @@ fn applyMigration(db: *c.sqlite3, migration: Migration) !void {
     try execDb(db, migration.sql);
 
     const insert_sql = "INSERT INTO schema_migrations(version, name) VALUES(?, ?);";
-    const stmt = try sqlite.Statement.prepare(db, insert_sql);
+    const stmt = try Statement.prepare(db, insert_sql);
     defer stmt.deinit();
 
     stmt.bindInt64(1, migration.version);

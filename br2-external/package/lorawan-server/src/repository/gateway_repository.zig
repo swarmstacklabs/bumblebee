@@ -3,7 +3,7 @@ const posix = std.posix;
 
 const app_mod = @import("../app.zig");
 const packets = @import("../lorawan/packets.zig");
-const sqlite = @import("../sqlite_helpers.zig");
+const storage = @import("../storage.zig");
 const Database = app_mod.Database;
 
 pub const GatewayTarget = struct {
@@ -65,7 +65,7 @@ pub const Repository = struct {
             "pending_downlink_json = COALESCE(excluded.pending_downlink_json, gateway_runtime.pending_downlink_json), " ++
             "updated_at = CURRENT_TIMESTAMP;";
 
-        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
 
         stmt.bindText(1, gateway_hex[0..]);
@@ -86,7 +86,7 @@ pub const Repository = struct {
             "UPDATE gateway_runtime " ++
             "SET pending_downlink_token = ?, pending_downlink_json = ?, updated_at = CURRENT_TIMESTAMP " ++
             "WHERE gateway_mac = ?;";
-        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
 
         stmt.bindInt(1, token);
@@ -104,7 +104,7 @@ pub const Repository = struct {
             "UPDATE gateway_runtime " ++
             "SET pending_downlink_token = NULL, pending_downlink_json = NULL, updated_at = CURRENT_TIMESTAMP " ++
             "WHERE gateway_mac = ? AND pending_downlink_token = ?;";
-        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
 
         const gateway_hex = packets.gatewayMacHex(gateway_mac);
@@ -122,11 +122,11 @@ pub const Repository = struct {
         const sql =
             "SELECT peer_address, peer_port, semtech_version, pending_downlink_token, pending_downlink_json " ++
             "FROM gateway_runtime WHERE gateway_mac = ?;";
-        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
 
         stmt.bindText(1, gateway_hex[0..]);
-        if (stmt.step() != sqlite.c.SQLITE_ROW) return error.GatewayNotConnected;
+        if (stmt.step() != storage.c.SQLITE_ROW) return error.GatewayNotConnected;
 
         const ip_text = stmt.readText(0) orelse return error.GatewayNotConnected;
         const port = stmt.readInt(1);
@@ -158,11 +158,11 @@ pub const Repository = struct {
             "SELECT semtech_version, last_seen_at, last_seen_unix_ms, peer_address, peer_port, " ++
             "pending_downlink_token, pending_downlink_json, updated_at " ++
             "FROM gateway_runtime WHERE gateway_mac = ?;";
-        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
 
         stmt.bindText(1, gateway_hex[0..]);
-        if (stmt.step() != sqlite.c.SQLITE_ROW) return null;
+        if (stmt.step() != storage.c.SQLITE_ROW) return null;
 
         return .{
             .gateway_mac = gateway_mac,
@@ -185,7 +185,7 @@ pub const Repository = struct {
             "SELECT gateway_mac, semtech_version, last_seen_at, last_seen_unix_ms, peer_address, peer_port, " ++
             "pending_downlink_token, pending_downlink_json, updated_at " ++
             "FROM gateway_runtime ORDER BY gateway_mac ASC;";
-        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
 
         var out = std.ArrayList(RuntimeRecord){};
@@ -194,7 +194,7 @@ pub const Repository = struct {
             out.deinit(allocator);
         }
 
-        while (stmt.step() == sqlite.c.SQLITE_ROW) {
+        while (stmt.step() == storage.c.SQLITE_ROW) {
             const gateway_hex = stmt.readText(0) orelse return error.InvalidGatewayMac;
             try out.append(allocator, .{
                 .gateway_mac = try parseGatewayMacHex(gateway_hex),
@@ -218,7 +218,7 @@ pub const Repository = struct {
 
         const gateway_hex = packets.gatewayMacHex(gateway_mac);
         const sql = "SELECT COUNT(*) FROM gateway_runtime WHERE gateway_mac = ? AND pending_downlink_token IS NOT NULL;";
-        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
 
         stmt.bindText(1, gateway_hex[0..]);
@@ -260,25 +260,25 @@ fn parseGatewayMacHex(text: []const u8) ![8]u8 {
     return out;
 }
 
-fn dupOptionalText(allocator: std.mem.Allocator, stmt: sqlite.Statement, column: c_int) !?[]u8 {
+fn dupOptionalText(allocator: std.mem.Allocator, stmt: storage.Statement, column: c_int) !?[]u8 {
     const value = stmt.readText(column) orelse return null;
     return try allocator.dupe(u8, value);
 }
 
-fn optionalI64Column(stmt: sqlite.Statement, column: c_int) ?i64 {
-    if (stmt.columnType(column) == sqlite.c.SQLITE_NULL) return null;
+fn optionalI64Column(stmt: storage.Statement, column: c_int) ?i64 {
+    if (stmt.columnType(column) == storage.c.SQLITE_NULL) return null;
     return stmt.readInt64(column);
 }
 
-fn optionalU16Column(stmt: sqlite.Statement, column: c_int) ?u16 {
-    if (stmt.columnType(column) == sqlite.c.SQLITE_NULL) return null;
+fn optionalU16Column(stmt: storage.Statement, column: c_int) ?u16 {
+    if (stmt.columnType(column) == storage.c.SQLITE_NULL) return null;
     const value = stmt.readInt(column);
     if (value < 0 or value > std.math.maxInt(u16)) return null;
     return @intCast(value);
 }
 
-fn optionalU8Column(stmt: sqlite.Statement, column: c_int) ?u8 {
-    if (stmt.columnType(column) == sqlite.c.SQLITE_NULL) return null;
+fn optionalU8Column(stmt: storage.Statement, column: c_int) ?u8 {
+    if (stmt.columnType(column) == storage.c.SQLITE_NULL) return null;
     const value = stmt.readInt(column);
     if (value < 0 or value > std.math.maxInt(u8)) return null;
     return @intCast(value);

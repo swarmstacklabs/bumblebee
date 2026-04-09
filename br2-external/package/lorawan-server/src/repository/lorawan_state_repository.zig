@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const app_mod = @import("../app.zig");
-const sqlite = @import("../sqlite_helpers.zig");
+const storage = @import("../storage.zig");
 const types = @import("../lorawan/types.zig");
 const Database = app_mod.Database;
 
@@ -17,10 +17,10 @@ pub const Repository = struct {
         defer self.db.mutex.unlock();
 
         const sql = "SELECT mac, network_name, gateway_json FROM gateways WHERE lower(mac) = lower(?);";
-        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
         stmt.bindText(1, gateway_mac_hex);
-        if (stmt.step() != sqlite.c.SQLITE_ROW) return null;
+        if (stmt.step() != storage.c.SQLITE_ROW) return null;
 
         const network_name = stmt.readText(1) orelse return null;
         const gateway_json = stmt.readText(2) orelse "{}";
@@ -39,10 +39,10 @@ pub const Repository = struct {
         defer self.db.mutex.unlock();
 
         const sql = "SELECT name, network_json FROM networks WHERE name = ?;";
-        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
         stmt.bindText(1, name);
-        if (stmt.step() != sqlite.c.SQLITE_ROW) return null;
+        if (stmt.step() != storage.c.SQLITE_ROW) return null;
 
         const json_text = stmt.readText(1) orelse "{}";
         const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_text, .{ .ignore_unknown_fields = true });
@@ -68,10 +68,10 @@ pub const Repository = struct {
         defer self.db.mutex.unlock();
 
         const sql = "SELECT id, name, dev_eui, app_eui, app_key, device_json FROM devices WHERE lower(dev_eui) = lower(?);";
-        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
         stmt.bindText(1, dev_eui_hex);
-        if (stmt.step() != sqlite.c.SQLITE_ROW) return null;
+        if (stmt.step() != storage.c.SQLITE_ROW) return null;
 
         const json_text = stmt.readText(5) orelse "{}";
         const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_text, .{ .ignore_unknown_fields = true });
@@ -97,10 +97,10 @@ pub const Repository = struct {
         defer self.db.mutex.unlock();
 
         const sql = "SELECT id, device_id, node_json FROM nodes WHERE lower(dev_addr) = lower(?);";
-        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
         stmt.bindText(1, dev_addr_hex);
-        if (stmt.step() != sqlite.c.SQLITE_ROW) return null;
+        if (stmt.step() != storage.c.SQLITE_ROW) return null;
 
         const json_text = stmt.readText(2) orelse "{}";
         const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_text, .{ .ignore_unknown_fields = true });
@@ -118,7 +118,7 @@ pub const Repository = struct {
             },
         );
         node.id = stmt.readInt64(0);
-        node.device_id = if (stmt.columnType(1) == sqlite.c.SQLITE_NULL) null else stmt.readInt64(1);
+        node.device_id = if (stmt.columnType(1) == storage.c.SQLITE_NULL) null else stmt.readInt64(1);
         node.dev_eui = if (jsonOptionalString(object, "dev_eui")) |value| try parseHexArray(8, value) else null;
         node.f_cnt_up = jsonOptionalU32(object, "fcntup");
         node.f_cnt_down = jsonOptionalU32(object, "fcntdown") orelse 0;
@@ -140,7 +140,7 @@ pub const Repository = struct {
         const sql =
             "INSERT INTO nodes(dev_addr, device_id, node_json) VALUES(?, ?, ?) " ++
             "ON CONFLICT(dev_addr) DO UPDATE SET device_id = excluded.device_id, node_json = excluded.node_json, updated_at = CURRENT_TIMESTAMP;";
-        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
         stmt.bindText(1, dev_addr_hex);
         if (device_id) |value| stmt.bindInt64(2, value) else stmt.bindNull(2);

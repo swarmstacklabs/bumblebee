@@ -1,6 +1,6 @@
 const app_mod = @import("../app.zig");
 const packets = @import("../lorawan/packets.zig");
-const sqlite = @import("../sqlite_helpers.zig");
+const storage = @import("../storage.zig");
 const Database = app_mod.Database;
 
 pub const Repository = struct {
@@ -19,7 +19,7 @@ pub const Repository = struct {
 
         const sql =
             "INSERT INTO events(event_type, entity_type, entity_id, payload_json) VALUES(?, 'gateway', ?, ?);";
-        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
 
         stmt.bindText(1, event_type);
@@ -34,7 +34,7 @@ pub const Repository = struct {
         defer self.db.mutex.unlock();
 
         const sql = "SELECT COUNT(*) FROM events WHERE event_type = ?;";
-        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
 
         stmt.bindText(1, event_type);

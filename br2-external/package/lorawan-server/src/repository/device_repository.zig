@@ -1,10 +1,13 @@
 const std = @import("std");
 
 const app_mod = @import("../app.zig");
-const sqlite = @import("../sqlite_helpers.zig");
+const crud_repository = @import("crud_repository.zig");
+const storage = @import("../storage.zig");
 const Database = app_mod.Database;
 const DeviceJson = app_mod.DeviceJson;
 const DevicePayload = app_mod.DevicePayload;
+
+pub const CRUDRepository = crud_repository.Interface(DeviceJson, DevicePayload, i64);
 
 pub const Repository = struct {
     db: Database,
@@ -18,7 +21,7 @@ pub const Repository = struct {
         defer self.db.mutex.unlock();
 
         const sql = "SELECT id, name, dev_eui, app_eui, app_key, created_at, updated_at FROM devices ORDER BY id DESC;";
-        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
 
         var out = std.ArrayList(DeviceJson){};
@@ -27,7 +30,7 @@ pub const Repository = struct {
             out.deinit(allocator);
         }
 
-        while (stmt.step() == sqlite.c.SQLITE_ROW) {
+        while (stmt.step() == storage.c.SQLITE_ROW) {
             try out.append(allocator, try rowToDevice(allocator, stmt));
         }
 
@@ -39,11 +42,11 @@ pub const Repository = struct {
         defer self.db.mutex.unlock();
 
         const sql = "SELECT id, name, dev_eui, app_eui, app_key, created_at, updated_at FROM devices WHERE id = ?;";
-        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
 
         stmt.bindInt64(1, id);
-        if (stmt.step() != sqlite.c.SQLITE_ROW) return null;
+        if (stmt.step() != storage.c.SQLITE_ROW) return null;
 
         return try rowToDevice(allocator, stmt);
     }
@@ -53,7 +56,7 @@ pub const Repository = struct {
         defer self.db.mutex.unlock();
 
         const sql = "INSERT INTO devices(name, dev_eui, app_eui, app_key) VALUES(?, ?, ?, ?);";
-        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
 
         stmt.bindText(1, payload.name);
@@ -72,7 +75,7 @@ pub const Repository = struct {
             "UPDATE devices " ++
             "SET name = ?, dev_eui = ?, app_eui = ?, app_key = ?, updated_at = CURRENT_TIMESTAMP " ++
             "WHERE id = ?;";
-        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
 
         stmt.bindText(1, payload.name);
@@ -82,7 +85,7 @@ pub const Repository = struct {
         stmt.bindInt64(5, id);
 
         stmt.expectDone() catch return error.DeviceUpdateFailed;
-        return sqlite.changes(self.db.db) != 0;
+        return storage.changes(self.db.conn) != 0;
     }
 
     pub fn delete(self: Repository, id: i64) !bool {
@@ -90,16 +93,20 @@ pub const Repository = struct {
         defer self.db.mutex.unlock();
 
         const sql = "DELETE FROM devices WHERE id = ?;";
-        const stmt = try sqlite.Statement.prepare(self.db.db, sql);
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
 
         stmt.bindInt64(1, id);
         stmt.expectDone() catch return error.DeviceDeleteFailed;
-        return sqlite.changes(self.db.db) != 0;
+        return storage.changes(self.db.conn) != 0;
     }
 };
 
-fn rowToDevice(allocator: std.mem.Allocator, stmt: sqlite.Statement) !DeviceJson {
+pub fn crud(db: Database) CRUDRepository {
+    return CRUDRepository.bind(Repository, db);
+}
+
+fn rowToDevice(allocator: std.mem.Allocator, stmt: storage.Statement) !DeviceJson {
     return .{
         .id = stmt.readInt64(0),
         .name = try dupColumnText(allocator, stmt, 1),
@@ -111,7 +118,7 @@ fn rowToDevice(allocator: std.mem.Allocator, stmt: sqlite.Statement) !DeviceJson
     };
 }
 
-fn dupColumnText(allocator: std.mem.Allocator, stmt: sqlite.Statement, column: c_int) ![]u8 {
+fn dupColumnText(allocator: std.mem.Allocator, stmt: storage.Statement, column: c_int) ![]u8 {
     const value = stmt.readText(column) orelse return allocator.alloc(u8, 0);
     return allocator.dupe(u8, value);
 }
