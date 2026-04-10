@@ -52,7 +52,7 @@ pub const Router = struct {
         var path_matched = false;
         for (self.routes) |*route| {
             if (try matchPath(route.path, req.path)) |params| {
-                if (route.method == req.method) {
+                if (route.method == req.method or (req.method == .HEAD and route.method == .GET)) {
                     return .{ .matched = Match.init(route, params) };
                 }
                 path_matched = true;
@@ -87,6 +87,8 @@ const ParamBuffer = struct {
 fn matchPath(pattern: []const u8, path: []const u8) !?ParamBuffer {
     var params = ParamBuffer.init();
 
+    if (std.mem.eql(u8, pattern, "/*")) return params;
+
     var pattern_it = std.mem.tokenizeScalar(u8, std.mem.trim(u8, pattern, "/"), '/');
     var path_it = std.mem.tokenizeScalar(u8, std.mem.trim(u8, path, "/"), '/');
 
@@ -120,4 +122,28 @@ test "router matches parameterized routes" {
     const matched = try router.match(req);
     try std.testing.expect(matched == .matched);
     try std.testing.expectEqualStrings("42", matched.matched.params.constSlice()[0].value);
+}
+
+test "router treats HEAD as GET for matching routes" {
+    const routes = [_]Route{
+        Route.init(.GET, "/healthz", undefined, &.{}),
+    };
+
+    const req = request_mod.Request.init(.HEAD, "/healthz", "/healthz", "", &.{});
+
+    const router = Router.init(&routes);
+    const matched = try router.match(req);
+    try std.testing.expect(matched == .matched);
+}
+
+test "router supports a catch-all wildcard route" {
+    const routes = [_]Route{
+        Route.init(.GET, "/*", undefined, &.{}),
+    };
+
+    const req = request_mod.Request.init(.GET, "/assets/app.js", "/assets/app.js", "", &.{});
+
+    const router = Router.init(&routes);
+    const matched = try router.match(req);
+    try std.testing.expect(matched == .matched);
 }

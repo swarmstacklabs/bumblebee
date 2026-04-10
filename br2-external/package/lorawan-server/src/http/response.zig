@@ -14,6 +14,7 @@ pub const Status = enum(u16) {
     not_found = 404,
     method_not_allowed = 405,
     conflict = 409,
+    service_unavailable = 503,
     internal_server_error = 500,
     _,
 
@@ -33,6 +34,7 @@ pub const Status = enum(u16) {
             .not_found => "Not Found",
             .method_not_allowed => "Method Not Allowed",
             .conflict => "Conflict",
+            .service_unavailable => "Service Unavailable",
             .internal_server_error => "Internal Server Error",
             else => "Unknown Status",
         };

@@ -3,4 +3,5 @@ endmenu
 
 source "$BR2_EXTERNAL_BUMBLEBEE_RPI_PATH/package/skeleton-app/Config.in"
 source "$BR2_EXTERNAL_BUMBLEBEE_RPI_PATH/package/lorawan-server/Config.in"
+source "$BR2_EXTERNAL_BUMBLEBEE_RPI_PATH/package/lorawan-server-ui/Config.in"
 source "$BR2_EXTERNAL_BUMBLEBEE_RPI_PATH/package/wifi-inspect/Config.in"

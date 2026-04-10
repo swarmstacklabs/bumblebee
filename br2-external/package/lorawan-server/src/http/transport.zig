@@ -2,9 +2,22 @@ const std = @import("std");
 const posix = std.posix;
 
 const app_mod = @import("../app.zig");
+const logger = @import("../logger.zig");
+
+const c = @cImport({
+    @cInclude("errno.h");
+    @cInclude("fcntl.h");
+    @cInclude("netinet/in.h");
+    @cInclude("sys/socket.h");
+});
 
 const Config = app_mod.Config;
-const c = app_mod.c;
+pub const InitError = error{
+    SocketOpenFailed,
+    SocketConfigureFailed,
+    SocketBindFailed,
+    SocketListenFailed,
+};
 
 pub const Connection = struct {
     fd: posix.socket_t,
@@ -48,13 +61,23 @@ pub const Connection = struct {
     }
 };
 
-pub fn initServerSocket(runtime_config: *const Config) !posix.socket_t {
-    const server_sock = try posix.socket(posix.AF.INET, posix.SOCK.STREAM, 0);
-    errdefer posix.close(server_sock);
+pub fn initServerSocket(runtime_config: *const Config) InitError!posix.socket_t {
+    const server_sock = c.socket(c.AF_INET, c.SOCK_STREAM, 0);
+    if (server_sock < 0) {
+        logErrnoFailure("socket_open_failed", "failed to open HTTP socket", runtime_config);
+        return error.SocketOpenFailed;
+    }
+    errdefer posix.close(@intCast(server_sock));
 
     const enable: c_int = 1;
-    try posix.setsockopt(server_sock, posix.SOL.SOCKET, posix.SO.REUSEADDR, std.mem.asBytes(&enable));
-    try setNonBlocking(server_sock);
+    if (c.setsockopt(server_sock, c.SOL_SOCKET, c.SO_REUSEADDR, std.mem.asBytes(&enable).ptr, @sizeOf(c_int)) != 0) {
+        logErrnoFailure("socket_configure_failed", "failed to configure HTTP socket", runtime_config);
+        return error.SocketConfigureFailed;
+    }
+    if (!setNonBlocking(server_sock)) {
+        logErrnoFailure("socket_configure_failed", "failed to configure HTTP socket", runtime_config);
+        return error.SocketConfigureFailed;
+    }
 
     var addr = posix.sockaddr.in{
         .family = posix.AF.INET,
@@ -63,9 +86,15 @@ pub fn initServerSocket(runtime_config: *const Config) !posix.socket_t {
         .zero = [_]u8{0} ** 8,
     };
 
-    try posix.bind(server_sock, @ptrCast(&addr), @sizeOf(@TypeOf(addr)));
-    try posix.listen(server_sock, 16);
-    return server_sock;
+    if (c.bind(server_sock, @ptrCast(&addr), @sizeOf(@TypeOf(addr))) != 0) {
+        logErrnoFailure("socket_bind_failed", "failed to bind HTTP socket", runtime_config);
+        return error.SocketBindFailed;
+    }
+    if (c.listen(server_sock, 16) != 0) {
+        logErrnoFailure("socket_listen_failed", "failed to listen on HTTP socket", runtime_config);
+        return error.SocketListenFailed;
+    }
+    return @intCast(server_sock);
 }
 
 pub fn closeServerSocket(server_sock: posix.socket_t) void {
@@ -85,12 +114,43 @@ pub fn acceptReadyClients(
             else => return err,
         };
         errdefer posix.close(client);
-        try setNonBlocking(client);
+        if (!setNonBlocking(@intCast(client))) return error.Unexpected;
         try conns.append(allocator, .{ .fd = client });
     }
 }
 
-fn setNonBlocking(sock: posix.socket_t) !void {
-    const flags = try posix.fcntl(sock, posix.F.GETFL, 0);
-    _ = try posix.fcntl(sock, posix.F.SETFL, flags | posix.SOCK.NONBLOCK);
+fn setNonBlocking(sock: c_int) bool {
+    const flags = c.fcntl(sock, c.F_GETFL, @as(c_int, 0));
+    if (flags < 0) return false;
+    return c.fcntl(sock, c.F_SETFL, flags | c.O_NONBLOCK) == 0;
+}
+
+fn logErrnoFailure(event: []const u8, message: []const u8, runtime_config: *const Config) void {
+    logger.err("http", event, message, .{
+        .bind_address = runtime_config.bind_address,
+        .port = runtime_config.http_port,
+        .errno_name = errnoName(),
+        .errno_code = errnoCode(),
+    });
+}
+
+fn errnoCode() c_int {
+    return std.c._errno().*;
+}
+
+fn errnoName() []const u8 {
+    return switch (errnoCode()) {
+        c.EPERM => "EPERM",
+        c.EACCES => "EACCES",
+        c.EADDRINUSE => "EADDRINUSE",
+        c.EADDRNOTAVAIL => "EADDRNOTAVAIL",
+        c.EAFNOSUPPORT => "EAFNOSUPPORT",
+        c.EINVAL => "EINVAL",
+        c.EMFILE => "EMFILE",
+        c.ENFILE => "ENFILE",
+        c.ENOBUFS => "ENOBUFS",
+        c.ENOMEM => "ENOMEM",
+        c.ENOTSOCK => "ENOTSOCK",
+        else => "UNKNOWN",
+    };
 }

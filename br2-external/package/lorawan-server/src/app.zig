@@ -9,6 +9,7 @@ pub const env_http_port = config.env_http_port;
 pub const env_db_path = config.env_db_path;
 pub const env_admin_user = config.env_admin_user;
 pub const env_admin_pass = config.env_admin_pass;
+pub const env_frontend_root = config.env_frontend_root;
 pub const AdminConfig = config.AdminConfig;
 pub const Config = config.Config;
 

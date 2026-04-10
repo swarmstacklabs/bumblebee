@@ -585,10 +585,18 @@ const TestHarness = struct {
         var app = try App.init(allocator, db_path);
         errdefer app.deinit();
 
-        var cfg = Config.init(allocator, "0.0.0.0", 0, 0, db_path, app_mod.AdminConfig.init(null, null));
+        var cfg = try Config.initWithDefaultFrontendRoot(
+            allocator,
+            "0.0.0.0",
+            0,
+            0,
+            db_path,
+            app_mod.AdminConfig.init(null, null),
+        );
+        defer cfg.deinit();
 
         const socket = initServerSocket(&cfg) catch |err| switch (err) {
-            error.Unexpected, error.AccessDenied => return error.SkipZigTest,
+            error.SocketOpenFailed, error.SocketConfigureFailed, error.SocketBindFailed => return error.SkipZigTest,
             else => return err,
         };
         errdefer socket.close();

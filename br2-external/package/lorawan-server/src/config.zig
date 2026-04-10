@@ -11,6 +11,7 @@ pub const env_http_port = "LORAWAN_SERVER_HTTP_PORT";
 pub const env_db_path = "LORAWAN_SERVER_DB_PATH";
 pub const env_admin_user = "LORAWAN_SERVER_ADMIN_USER";
 pub const env_admin_pass = "LORAWAN_SERVER_ADMIN_PASS";
+pub const env_frontend_root = "LORAWAN_SERVER_FRONTEND_ROOT";
 
 pub const AdminConfig = struct {
     user: ?[]u8,
@@ -36,17 +37,38 @@ pub const Config = struct {
     udp_port: u16,
     http_port: u16,
     db_path: []u8,
+    frontend_root: []u8,
     admin: AdminConfig,
 
-    pub fn init(allocator: std.mem.Allocator, bind_address: []const u8, udp_port: u16, http_port: u16, db_path: []u8, admin: AdminConfig) Config {
+    pub fn init(allocator: std.mem.Allocator, bind_address: []const u8, udp_port: u16, http_port: u16, db_path: []u8, frontend_root: []u8, admin: AdminConfig) Config {
         return .{
             .allocator = allocator,
             .bind_address = bind_address,
             .udp_port = udp_port,
             .http_port = http_port,
             .db_path = db_path,
+            .frontend_root = frontend_root,
             .admin = admin,
         };
+    }
+
+    pub fn initWithDefaultFrontendRoot(
+        allocator: std.mem.Allocator,
+        bind_address: []const u8,
+        udp_port: u16,
+        http_port: u16,
+        db_path: []const u8,
+        admin: AdminConfig,
+    ) !Config {
+        return Config.init(
+            allocator,
+            bind_address,
+            udp_port,
+            http_port,
+            try allocator.dupe(u8, db_path),
+            try allocator.dupe(u8, defaultFrontendRoot()),
+            admin,
+        );
     }
 
     pub fn load(allocator: std.mem.Allocator) !Config {
@@ -56,6 +78,7 @@ pub const Config = struct {
             try loadPort(allocator, env_udp_port, default_udp_port),
             try loadPort(allocator, env_http_port, default_http_port),
             try loadOwnedString(allocator, env_db_path, defaultDbPath()),
+            try loadOwnedString(allocator, env_frontend_root, defaultFrontendRoot()),
             AdminConfig.init(
                 try loadOptionalString(allocator, env_admin_user),
                 try loadOptionalString(allocator, env_admin_pass),
@@ -69,6 +92,7 @@ pub const Config = struct {
 
     pub fn deinit(self: *Config) void {
         self.allocator.free(self.db_path);
+        self.allocator.free(self.frontend_root);
         self.admin.deinit(self.allocator);
     }
 
@@ -86,6 +110,7 @@ pub const Config = struct {
             .udp_port = self.udp_port,
             .http_port = self.http_port,
             .db_path = self.db_path,
+            .frontend_root = self.frontend_root,
             .bind_address = self.bind_address,
             .admin_auth = if (self.admin.isConfigured()) "enabled" else "disabled",
         });
@@ -96,6 +121,13 @@ fn defaultDbPath() []const u8 {
     return switch (builtin.cpu.arch) {
         .arm, .aarch64 => "/var/lib/lorawan-server/lorawan-server.db",
         else => "data/lorawan-server.db",
+    };
+}
+
+fn defaultFrontendRoot() []const u8 {
+    return switch (builtin.cpu.arch) {
+        .arm, .aarch64 => "/usr/share/lorawan-server/ui",
+        else => "./ui",
     };
 }
 

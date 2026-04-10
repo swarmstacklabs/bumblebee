@@ -1,0 +1,5 @@
+config BR2_PACKAGE_LORAWAN_SERVER_UI
+	bool "lorawan-server-ui"
+	help
+	  Install the built Vue admin UI for lorawan-server into
+	  /usr/share/lorawan-server/frontend.

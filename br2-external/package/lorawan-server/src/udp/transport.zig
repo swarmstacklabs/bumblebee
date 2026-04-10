@@ -2,8 +2,22 @@ const std = @import("std");
 const posix = std.posix;
 
 const app_mod = @import("../app.zig");
+const logger = @import("../logger.zig");
+
+const c = @cImport({
+    @cInclude("errno.h");
+    @cInclude("fcntl.h");
+    @cInclude("netinet/in.h");
+    @cInclude("sys/socket.h");
+});
 
 const Config = app_mod.Config;
+pub const InitError = error{
+    SocketOpenFailed,
+    SocketConfigureFailed,
+    SocketBindFailed,
+};
+
 pub const Datagram = struct {
     client_addr: posix.sockaddr.in,
     client_len: posix.socklen_t,
@@ -13,14 +27,24 @@ pub const Datagram = struct {
 pub const Socket = struct {
     fd: posix.socket_t,
 
-    pub fn initServer(runtime_config: *const Config) !Socket {
-        const sock = try posix.socket(posix.AF.INET, posix.SOCK.DGRAM, 0);
-        errdefer posix.close(sock);
+    pub fn initServer(runtime_config: *const Config) InitError!Socket {
+        const sock = c.socket(c.AF_INET, c.SOCK_DGRAM, 0);
+        if (sock < 0) {
+            logErrnoFailure("socket_open_failed", "failed to open UDP socket", runtime_config);
+            return error.SocketOpenFailed;
+        }
+        errdefer posix.close(@intCast(sock));
 
-        try setNonBlocking(sock);
+        if (!setNonBlocking(sock)) {
+            logErrnoFailure("socket_configure_failed", "failed to configure UDP socket", runtime_config);
+            return error.SocketConfigureFailed;
+        }
 
         const enable: c_int = 1;
-        try posix.setsockopt(sock, posix.SOL.SOCKET, posix.SO.REUSEADDR, std.mem.asBytes(&enable));
+        if (c.setsockopt(sock, c.SOL_SOCKET, c.SO_REUSEADDR, std.mem.asBytes(&enable).ptr, @sizeOf(c_int)) != 0) {
+            logErrnoFailure("socket_configure_failed", "failed to configure UDP socket", runtime_config);
+            return error.SocketConfigureFailed;
+        }
 
         var addr = posix.sockaddr.in{
             .family = posix.AF.INET,
@@ -29,8 +53,11 @@ pub const Socket = struct {
             .zero = [_]u8{0} ** 8,
         };
 
-        try posix.bind(sock, @ptrCast(&addr), @sizeOf(@TypeOf(addr)));
-        return .{ .fd = sock };
+        if (c.bind(sock, @ptrCast(&addr), @sizeOf(@TypeOf(addr))) != 0) {
+            logErrnoFailure("socket_bind_failed", "failed to bind UDP socket", runtime_config);
+            return error.SocketBindFailed;
+        }
+        return .{ .fd = @intCast(sock) };
     }
 
     pub fn close(self: Socket) void {
@@ -58,7 +85,38 @@ pub const Socket = struct {
     }
 };
 
-fn setNonBlocking(sock: posix.socket_t) !void {
-    const flags = try posix.fcntl(sock, posix.F.GETFL, 0);
-    _ = try posix.fcntl(sock, posix.F.SETFL, flags | posix.SOCK.NONBLOCK);
+fn setNonBlocking(sock: c_int) bool {
+    const flags = c.fcntl(sock, c.F_GETFL, @as(c_int, 0));
+    if (flags < 0) return false;
+    return c.fcntl(sock, c.F_SETFL, flags | c.O_NONBLOCK) == 0;
+}
+
+fn logErrnoFailure(event: []const u8, message: []const u8, runtime_config: *const Config) void {
+    logger.err("udp", event, message, .{
+        .bind_address = runtime_config.bind_address,
+        .port = runtime_config.udp_port,
+        .errno_name = errnoName(),
+        .errno_code = errnoCode(),
+    });
+}
+
+fn errnoCode() c_int {
+    return std.c._errno().*;
+}
+
+fn errnoName() []const u8 {
+    return switch (errnoCode()) {
+        c.EPERM => "EPERM",
+        c.EACCES => "EACCES",
+        c.EADDRINUSE => "EADDRINUSE",
+        c.EADDRNOTAVAIL => "EADDRNOTAVAIL",
+        c.EAFNOSUPPORT => "EAFNOSUPPORT",
+        c.EINVAL => "EINVAL",
+        c.EMFILE => "EMFILE",
+        c.ENFILE => "ENFILE",
+        c.ENOBUFS => "ENOBUFS",
+        c.ENOMEM => "ENOMEM",
+        c.ENOTSOCK => "ENOTSOCK",
+        else => "UNKNOWN",
+    };
 }

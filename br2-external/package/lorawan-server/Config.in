@@ -1,5 +1,6 @@
 config BR2_PACKAGE_LORAWAN_SERVER
 	bool "lorawan-server"
 	select BR2_PACKAGE_SQLITE
+	select BR2_PACKAGE_LORAWAN_SERVER_UI
 	help
 	  Build and install the LoRaWAN UDP bridge plus HTTP CRUD API.

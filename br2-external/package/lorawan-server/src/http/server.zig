@@ -10,7 +10,7 @@ const router_mod = @import("router.zig");
 const runtime = @import("runtime.zig");
 const services_mod = @import("services.zig");
 
-const home_handler = @import("handlers/home.zig");
+const frontend_handler = @import("handlers/frontend.zig");
 const health_handler = @import("handlers/health.zig");
 const devices_handler = @import("handlers/devices.zig");
 const system_resources_handler = @import("handlers/system_resources.zig");
@@ -36,7 +36,6 @@ const api_middlewares = [_]runtime.Middleware{
 };
 
 const routes = [_]router_mod.Route{
-    router_mod.Route.init(.GET, "/", home_handler.handle, &.{}),
     router_mod.Route.init(.GET, "/healthz", health_handler.handle, &.{}),
     router_mod.Route.init(.GET, "/api/devices", devices_handler.list, &api_middlewares),
     router_mod.Route.init(.POST, "/api/devices", devices_handler.create, &api_middlewares),
@@ -44,6 +43,7 @@ const routes = [_]router_mod.Route{
     router_mod.Route.init(.PUT, "/api/devices/:id", devices_handler.update, &api_middlewares),
     router_mod.Route.init(.DELETE, "/api/devices/:id", devices_handler.delete, &api_middlewares),
     router_mod.Route.init(.GET, "/api/system/resources", system_resources_handler.get, &api_middlewares),
+    router_mod.Route.init(.GET, "/*", frontend_handler.handle, &.{}),
 };
 
 const dispatcher = pipeline.Dispatcher.init(&global_middlewares, router_mod.Router.init(&routes));

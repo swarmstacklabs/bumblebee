@@ -9,13 +9,19 @@ const http_transport = @import("http/transport.zig");
 const App = app_mod.App;
 const Config = app_mod.Config;
 
+pub const StartupError = error{ServerStartupFailed};
+
 pub fn serverMain(app: *App, runtime_config: *const Config) !void {
     const allocator = app.allocator;
 
-    const udp_sock = try udp.initServerSocket(runtime_config);
+    const udp_sock = udp.initServerSocket(runtime_config) catch |err| switch (err) {
+        error.SocketOpenFailed, error.SocketConfigureFailed, error.SocketBindFailed => return error.ServerStartupFailed,
+    };
     defer udp_sock.close();
 
-    const http_sock = try http.initServerSocket(runtime_config);
+    const http_sock = http.initServerSocket(runtime_config) catch |err| switch (err) {
+        error.SocketOpenFailed, error.SocketConfigureFailed, error.SocketBindFailed, error.SocketListenFailed => return error.ServerStartupFailed,
+    };
     defer http_transport.closeServerSocket(http_sock);
 
     var udp_server = udp.Server.init(app, udp_sock);
