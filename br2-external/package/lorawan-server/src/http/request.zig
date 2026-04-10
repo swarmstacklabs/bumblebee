@@ -48,6 +48,32 @@ pub const Request = struct {
         }
         return null;
     }
+
+    pub fn queryParam(self: Request, name: []const u8) ?[]const u8 {
+        const query = self.queryString() orelse return null;
+        var pairs = std.mem.tokenizeScalar(u8, query, '&');
+        while (pairs.next()) |pair| {
+            if (pair.len == 0) continue;
+
+            const separator = std.mem.indexOfScalar(u8, pair, '=') orelse {
+                if (std.mem.eql(u8, pair, name)) return "";
+                continue;
+            };
+
+            if (std.mem.eql(u8, pair[0..separator], name)) {
+                return pair[separator + 1 ..];
+            }
+        }
+
+        return null;
+    }
+
+    fn queryString(self: Request) ?[]const u8 {
+        const query_start = std.mem.indexOfScalar(u8, self.target, '?') orelse return null;
+        const query_with_fragment = self.target[query_start + 1 ..];
+        const fragment_start = std.mem.indexOfScalar(u8, query_with_fragment, '#') orelse query_with_fragment.len;
+        return query_with_fragment[0..fragment_start];
+    }
 };
 
 pub fn parse(raw: []const u8, body_start: usize, header_buf: []Header) !Request {
@@ -96,4 +122,14 @@ pub fn parseMethod(value: []const u8) Method {
 fn stripQuery(target: []const u8) []const u8 {
     const end = std.mem.indexOfAny(u8, target, "?#") orelse target.len;
     return target[0..end];
+}
+
+test "Request queryParam returns query values from target" {
+    const req = Request.init(.GET, "/api/devices?page=2&page_size=25&sort_by=name&sort_order=desc", "/api/devices", "", &.{});
+
+    try std.testing.expectEqualStrings("2", req.queryParam("page").?);
+    try std.testing.expectEqualStrings("25", req.queryParam("page_size").?);
+    try std.testing.expectEqualStrings("name", req.queryParam("sort_by").?);
+    try std.testing.expectEqualStrings("desc", req.queryParam("sort_order").?);
+    try std.testing.expect(req.queryParam("missing") == null);
 }

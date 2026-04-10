@@ -3,12 +3,58 @@ const std = @import("std");
 const app_mod = @import("../app.zig");
 const Database = app_mod.Database;
 
+pub const SortOrder = enum {
+    asc,
+    desc,
+};
+
+pub const ListParams = struct {
+    page: usize = 1,
+    page_size: usize = 50,
+    sort_by: []const u8,
+    sort_order: SortOrder,
+
+    pub fn offset(self: ListParams) usize {
+        return (self.page - 1) * self.page_size;
+    }
+};
+
+pub fn ListPage(comptime Record: type) type {
+    return struct {
+        entries: []Record,
+        page_number: usize,
+        page_size: usize,
+        total_entries: usize,
+        total_pages: usize,
+        sort_by: []const u8,
+        sort_order: SortOrder,
+
+        pub fn init(entries: []Record, params: ListParams, total_entries: usize) @This() {
+            return .{
+                .entries = entries,
+                .page_number = params.page,
+                .page_size = params.page_size,
+                .total_entries = total_entries,
+                .total_pages = totalPages(total_entries, params.page_size),
+                .sort_by = params.sort_by,
+                .sort_order = params.sort_order,
+            };
+        }
+    };
+}
+
+pub fn totalPages(total_entries: usize, page_size: usize) usize {
+    if (total_entries == 0) return 0;
+    return (total_entries + page_size - 1) / page_size;
+}
+
 pub fn Interface(comptime Record: type, comptime WriteInput: type, comptime Id: type) type {
     return struct {
         const Self = @This();
+        pub const Page = ListPage(Record);
 
         db: Database,
-        listFn: *const fn (Database, std.mem.Allocator) anyerror![]Record,
+        listFn: *const fn (Database, std.mem.Allocator, ListParams) anyerror!Page,
         getFn: *const fn (Database, std.mem.Allocator, Id) anyerror!?Record,
         createFn: *const fn (Database, WriteInput) anyerror!void,
         updateFn: *const fn (Database, Id, WriteInput) anyerror!bool,
@@ -20,8 +66,8 @@ pub fn Interface(comptime Record: type, comptime WriteInput: type, comptime Id: 
             return .{
                 .db = db,
                 .listFn = struct {
-                    fn call(repo_db: Database, allocator: std.mem.Allocator) ![]Record {
-                        return Impl.init(repo_db).list(allocator);
+                    fn call(repo_db: Database, allocator: std.mem.Allocator, params: ListParams) !Page {
+                        return Impl.init(repo_db).list(allocator, params);
                     }
                 }.call,
                 .getFn = struct {
@@ -47,8 +93,8 @@ pub fn Interface(comptime Record: type, comptime WriteInput: type, comptime Id: 
             };
         }
 
-        pub fn list(self: Self, allocator: std.mem.Allocator) ![]Record {
-            return self.listFn(self.db, allocator);
+        pub fn list(self: Self, allocator: std.mem.Allocator, params: ListParams) !Page {
+            return self.listFn(self.db, allocator, params);
         }
 
         pub fn get(self: Self, allocator: std.mem.Allocator, id: Id) !?Record {
@@ -110,12 +156,16 @@ test "CRUDRepository forwards operations to implementation" {
             return .{ .db = db };
         }
 
-        pub fn list(self: @This(), allocator: std.mem.Allocator) ![]Record {
+        pub fn list(self: @This(), allocator: std.mem.Allocator, params: ListParams) !Interface(Record, WriteInput, i64).Page {
             _ = self;
+            try testing.expectEqual(@as(usize, 2), params.page);
+            try testing.expectEqual(@as(usize, 10), params.page_size);
+            try testing.expectEqualStrings("name", params.sort_by);
+            try testing.expectEqual(SortOrder.desc, params.sort_order);
 
             var records = try allocator.alloc(Record, 1);
             records[0] = .{ .id = 1, .name = "device-a" };
-            return records;
+            return Interface(Record, WriteInput, i64).Page.init(records, params, 31);
         }
 
         pub fn get(self: @This(), allocator: std.mem.Allocator, id: i64) !?Record {
@@ -160,11 +210,22 @@ test "CRUDRepository forwards operations to implementation" {
     const CrudRepository = Interface(Record, WriteInput, i64);
     const repo = CrudRepository.bind(FakeRepository, db);
 
-    const records = try repo.list(testing.allocator);
-    defer testing.allocator.free(records);
-    try testing.expectEqual(@as(usize, 1), records.len);
-    try testing.expectEqual(@as(i64, 1), records[0].id);
-    try testing.expectEqualStrings("device-a", records[0].name);
+    const page = try repo.list(testing.allocator, .{
+        .page = 2,
+        .page_size = 10,
+        .sort_by = "name",
+        .sort_order = .desc,
+    });
+    defer testing.allocator.free(page.entries);
+    try testing.expectEqual(@as(usize, 1), page.entries.len);
+    try testing.expectEqual(@as(i64, 1), page.entries[0].id);
+    try testing.expectEqualStrings("device-a", page.entries[0].name);
+    try testing.expectEqual(@as(usize, 2), page.page_number);
+    try testing.expectEqual(@as(usize, 10), page.page_size);
+    try testing.expectEqual(@as(usize, 31), page.total_entries);
+    try testing.expectEqual(@as(usize, 4), page.total_pages);
+    try testing.expectEqualStrings("name", page.sort_by);
+    try testing.expectEqual(SortOrder.desc, page.sort_order);
 
     const record = (try repo.get(testing.allocator, 42)).?;
     try testing.expectEqual(@as(i64, 42), record.id);
@@ -200,9 +261,10 @@ test "CRUDRepository propagates implementation errors" {
             return .{ .db = db };
         }
 
-        pub fn list(self: @This(), allocator: std.mem.Allocator) ![]Record {
+        pub fn list(self: @This(), allocator: std.mem.Allocator, params: ListParams) !Interface(Record, WriteInput, i64).Page {
             _ = self;
             _ = allocator;
+            _ = params;
             return error.ListFailed;
         }
 
@@ -239,9 +301,18 @@ test "CRUDRepository propagates implementation errors" {
     const CrudRepository = Interface(Record, WriteInput, i64);
     const repo = CrudRepository.bind(FakeRepository, db);
 
-    try testing.expectError(error.ListFailed, repo.list(testing.allocator));
+    try testing.expectError(error.ListFailed, repo.list(testing.allocator, .{
+        .sort_by = "id",
+        .sort_order = .asc,
+    }));
     try testing.expectError(error.GetFailed, repo.get(testing.allocator, 1));
     try testing.expectError(error.CreateFailed, repo.create(.{}));
     try testing.expectError(error.UpdateFailed, repo.update(1, .{}));
     try testing.expectError(error.DeleteFailed, repo.delete(1));
+}
+
+test "CRUDRepository totalPages rounds up and handles empty totals" {
+    try std.testing.expectEqual(@as(usize, 0), totalPages(0, 25));
+    try std.testing.expectEqual(@as(usize, 1), totalPages(1, 25));
+    try std.testing.expectEqual(@as(usize, 2), totalPages(26, 25));
 }

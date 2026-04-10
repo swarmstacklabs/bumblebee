@@ -6,6 +6,8 @@ const storage = @import("../storage.zig");
 const Database = app_mod.Database;
 const DeviceRecord = app_mod.DeviceRecord;
 const DeviceWriteInput = app_mod.DeviceWriteInput;
+const ListParams = crud_repository.ListParams;
+const SortOrder = crud_repository.SortOrder;
 
 pub const CRUDRepository = crud_repository.Interface(DeviceRecord, DeviceWriteInput, i64);
 
@@ -18,13 +20,26 @@ pub const Repository = struct {
 
     pub fn deinit(_: Repository) void {}
 
-    pub fn list(self: Repository, allocator: std.mem.Allocator) ![]DeviceRecord {
+    pub fn list(self: Repository, allocator: std.mem.Allocator, params: ListParams) !CRUDRepository.Page {
         self.db.mutex.lock();
         defer self.db.mutex.unlock();
 
-        const sql = "SELECT id, name, dev_eui, app_eui, app_key, created_at, updated_at FROM devices ORDER BY id DESC;";
+        const total_entries = try countDevices(self.db.conn);
+        const sort_column = try sqlSortColumn(params.sort_by);
+        const sort_direction = sqlSortDirection(params.sort_order);
+
+        var sql_buf: [256]u8 = undefined;
+        const sql = try std.fmt.bufPrint(
+            &sql_buf,
+            "SELECT id, name, dev_eui, app_eui, app_key, created_at, updated_at " ++
+                "FROM devices ORDER BY {s} {s}, id {s} LIMIT ? OFFSET ?;",
+            .{ sort_column, sort_direction, sort_direction },
+        );
         const stmt = try storage.Statement.prepare(self.db.conn, sql);
         defer stmt.deinit();
+
+        stmt.bindInt64(1, params.page_size);
+        stmt.bindInt64(2, params.offset());
 
         var out = std.ArrayList(DeviceRecord){};
         errdefer {
@@ -36,7 +51,7 @@ pub const Repository = struct {
             try out.append(allocator, try rowToDevice(allocator, stmt));
         }
 
-        return out.toOwnedSlice(allocator);
+        return CRUDRepository.Page.init(try out.toOwnedSlice(allocator), params, total_entries);
     }
 
     pub fn get(self: Repository, allocator: std.mem.Allocator, id: i64) !?DeviceRecord {
@@ -106,6 +121,31 @@ pub const Repository = struct {
 
 pub fn crud(db: Database) CRUDRepository {
     return CRUDRepository.bind(Repository, db);
+}
+
+fn countDevices(conn: *storage.c.sqlite3) !usize {
+    const stmt = try storage.Statement.prepare(conn, "SELECT COUNT(*) FROM devices;");
+    defer stmt.deinit();
+
+    try stmt.expectRow();
+    return @as(usize, @intCast(stmt.readInt64(0)));
+}
+
+fn sqlSortColumn(sort_by: []const u8) ![]const u8 {
+    if (std.mem.eql(u8, sort_by, "id")) return "id";
+    if (std.mem.eql(u8, sort_by, "name")) return "name";
+    if (std.mem.eql(u8, sort_by, "dev_eui")) return "dev_eui";
+    if (std.mem.eql(u8, sort_by, "app_eui")) return "app_eui";
+    if (std.mem.eql(u8, sort_by, "created_at")) return "created_at";
+    if (std.mem.eql(u8, sort_by, "updated_at")) return "updated_at";
+    return error.BadRequest;
+}
+
+fn sqlSortDirection(sort_order: SortOrder) []const u8 {
+    return switch (sort_order) {
+        .asc => "ASC",
+        .desc => "DESC",
+    };
 }
 
 fn rowToDevice(allocator: std.mem.Allocator, stmt: storage.Statement) !DeviceRecord {

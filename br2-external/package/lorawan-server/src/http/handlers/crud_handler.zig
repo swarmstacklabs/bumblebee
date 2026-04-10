@@ -2,6 +2,7 @@ const std = @import("std");
 
 const app_mod = @import("../../app.zig");
 const context_mod = @import("../context.zig");
+const crud_repository = @import("../../repository/crud_repository.zig");
 
 const StatusResponse = app_mod.StatusResponse;
 const ErrorResponse = app_mod.ErrorResponse;
@@ -18,18 +19,19 @@ pub fn Interface(comptime Record: type, comptime WriteInput: type, comptime Id: 
 
             return struct {
                 pub fn list(ctx: *context_mod.Context) !void {
+                    const params = try parseListParams(ctx, Impl);
                     const repo: Repository = Impl.repo(ctx);
-                    const records = try repo.list(ctx.allocator);
+                    const page = try repo.list(ctx.allocator, params);
                     defer {
-                        for (records) |record| deinitRecord(ctx.allocator, record);
-                        ctx.allocator.free(records);
+                        for (page.entries) |record| deinitRecord(ctx.allocator, record);
+                        ctx.allocator.free(page.entries);
                     }
 
                     if (@hasDecl(Impl, "normalizeList")) {
-                        try Impl.normalizeList(ctx, records);
+                        try Impl.normalizeList(ctx, page.entries);
                     }
 
-                    const json = try std.json.Stringify.valueAlloc(ctx.allocator, records, .{});
+                    const json = try std.json.Stringify.valueAlloc(ctx.allocator, page, .{});
                     ctx.res.setOwnedBody(.ok, "application/json", json);
                 }
 
@@ -145,6 +147,42 @@ fn parseId(comptime T: type, value: []const u8) !T {
     };
 }
 
+fn parseListParams(ctx: *context_mod.Context, comptime Impl: type) !crud_repository.ListParams {
+    const default_page_size: usize = if (@hasDecl(Impl, "default_page_size")) Impl.default_page_size else 50;
+    const max_page_size: usize = if (@hasDecl(Impl, "max_page_size")) Impl.max_page_size else 100;
+    const default_sort_by: []const u8 = if (@hasDecl(Impl, "default_sort_by")) Impl.default_sort_by else "id";
+    const default_sort_order: crud_repository.SortOrder = if (@hasDecl(Impl, "default_sort_order")) Impl.default_sort_order else .asc;
+
+    const page = try parsePositiveQueryInt(ctx.req.queryParam("page"), 1);
+    const page_size = try parsePositiveQueryInt(ctx.req.queryParam("page_size"), default_page_size);
+    if (page_size > max_page_size) return error.BadRequest;
+
+    const requested_sort_by = ctx.req.queryParam("sort_by") orelse default_sort_by;
+    const sort_by = if (@hasDecl(Impl, "normalizeSortBy")) try Impl.normalizeSortBy(requested_sort_by) else requested_sort_by;
+    const sort_order = try parseSortOrder(ctx.req.queryParam("sort_order"), default_sort_order);
+
+    return .{
+        .page = page,
+        .page_size = page_size,
+        .sort_by = sort_by,
+        .sort_order = sort_order,
+    };
+}
+
+fn parsePositiveQueryInt(value: ?[]const u8, default_value: usize) !usize {
+    const text = value orelse return default_value;
+    const parsed = std.fmt.parseInt(usize, text, 10) catch return error.BadRequest;
+    if (parsed == 0) return error.BadRequest;
+    return parsed;
+}
+
+fn parseSortOrder(value: ?[]const u8, default_value: crud_repository.SortOrder) !crud_repository.SortOrder {
+    const text = value orelse return default_value;
+    if (std.ascii.eqlIgnoreCase(text, "asc")) return .asc;
+    if (std.ascii.eqlIgnoreCase(text, "desc")) return .desc;
+    return error.BadRequest;
+}
+
 test "CRUDHandler forwards operations to implementation" {
     const testing = std.testing;
 
@@ -162,6 +200,10 @@ test "CRUDHandler forwards operations to implementation" {
     };
 
     const State = struct {
+        var last_list_page: ?usize = null;
+        var last_list_page_size: ?usize = null;
+        var last_list_sort_by: ?[]const u8 = null;
+        var last_list_sort_order: ?crud_repository.SortOrder = null;
         var last_created_name: ?[]const u8 = null;
         var last_updated_id: ?i64 = null;
         var last_updated_name: ?[]const u8 = null;
@@ -169,10 +211,15 @@ test "CRUDHandler forwards operations to implementation" {
     };
 
     const Repo = struct {
-        pub fn list(_: @This(), allocator: std.mem.Allocator) ![]Record {
+        pub fn list(_: @This(), allocator: std.mem.Allocator, params: crud_repository.ListParams) !crud_repository.ListPage(Record) {
+            State.last_list_page = params.page;
+            State.last_list_page_size = params.page_size;
+            State.last_list_sort_by = params.sort_by;
+            State.last_list_sort_order = params.sort_order;
+
             var out = try allocator.alloc(Record, 1);
             out[0] = .{ .id = 1, .name = "one" };
-            return out;
+            return crud_repository.ListPage(Record).init(out, params, 3);
         }
 
         pub fn get(_: @This(), _: std.mem.Allocator, id: i64) !?Record {
@@ -197,6 +244,8 @@ test "CRUDHandler forwards operations to implementation" {
 
     const FakeHandler = struct {
         pub const entity_name = "device";
+        pub const default_sort_by = "id";
+        pub const default_sort_order = crud_repository.SortOrder.asc;
 
         pub fn repo(_: *context_mod.Context) Repo {
             return .{};
@@ -212,14 +261,22 @@ test "CRUDHandler forwards operations to implementation" {
     const Handler = CrudHandler.bind(FakeHandler);
 
     State.last_created_name = null;
+    State.last_list_page = null;
+    State.last_list_page_size = null;
+    State.last_list_sort_by = null;
+    State.last_list_sort_order = null;
     State.last_updated_id = null;
     State.last_updated_name = null;
     State.last_deleted_id = null;
 
-    var ctx = testContext(testing.allocator, .GET, "/devices", "", null);
+    var ctx = testContext(testing.allocator, .GET, "/devices?page=2&page_size=1&sort_by=name&sort_order=desc", "", null);
     defer ctx.deinit();
     try Handler.list(&ctx);
-    try testing.expectEqualStrings("[{\"id\":1,\"name\":\"one\"}]", ctx.res.body);
+    try testing.expectEqual(@as(?usize, 2), State.last_list_page);
+    try testing.expectEqual(@as(?usize, 1), State.last_list_page_size);
+    try testing.expectEqualStrings("name", State.last_list_sort_by.?);
+    try testing.expectEqual(@as(?crud_repository.SortOrder, .desc), State.last_list_sort_order);
+    try testing.expectEqualStrings("{\"entries\":[{\"id\":1,\"name\":\"one\"}],\"page_number\":2,\"page_size\":1,\"total_entries\":3,\"total_pages\":3,\"sort_by\":\"name\",\"sort_order\":\"desc\"}", ctx.res.body);
 
     var get_ctx = testContext(testing.allocator, .GET, "/devices/42", "", "42");
     defer get_ctx.deinit();
@@ -260,8 +317,8 @@ test "CRUDHandler emits not found and conflict responses" {
     };
 
     const Repo = struct {
-        pub fn list(_: @This(), allocator: std.mem.Allocator) ![]Record {
-            return allocator.alloc(Record, 0);
+        pub fn list(_: @This(), allocator: std.mem.Allocator, params: crud_repository.ListParams) !crud_repository.ListPage(Record) {
+            return crud_repository.ListPage(Record).init(try allocator.alloc(Record, 0), params, 0);
         }
 
         pub fn get(_: @This(), _: std.mem.Allocator, _: i64) !?Record {
@@ -283,6 +340,8 @@ test "CRUDHandler emits not found and conflict responses" {
 
     const FakeHandler = struct {
         pub const entity_name = "device";
+        pub const default_sort_by = "id";
+        pub const default_sort_order = crud_repository.SortOrder.asc;
 
         pub fn repo(_: *context_mod.Context) Repo {
             return .{};
@@ -318,6 +377,73 @@ test "CRUDHandler emits not found and conflict responses" {
     defer delete_ctx.deinit();
     try Handler.delete(&delete_ctx);
     try testing.expectEqual(@as(u16, 404), delete_ctx.res.status.code());
+}
+
+test "CRUDHandler rejects invalid paging and sorting query params" {
+    const testing = std.testing;
+
+    const Record = struct {
+        id: i64,
+
+        pub fn deinit(_: @This(), _: std.mem.Allocator) void {}
+    };
+
+    const WriteInput = struct {
+        pub fn deinit(_: @This(), _: std.mem.Allocator) void {}
+    };
+
+    const Repo = struct {
+        pub fn list(_: @This(), allocator: std.mem.Allocator, params: crud_repository.ListParams) !crud_repository.ListPage(Record) {
+            return crud_repository.ListPage(Record).init(try allocator.alloc(Record, 0), params, 0);
+        }
+
+        pub fn get(_: @This(), _: std.mem.Allocator, _: i64) !?Record {
+            return null;
+        }
+
+        pub fn create(_: @This(), _: WriteInput) !void {}
+
+        pub fn update(_: @This(), _: i64, _: WriteInput) !bool {
+            return false;
+        }
+
+        pub fn delete(_: @This(), _: i64) !bool {
+            return false;
+        }
+    };
+
+    const FakeHandler = struct {
+        pub const entity_name = "device";
+        pub const default_sort_by = "id";
+
+        pub fn repo(_: *context_mod.Context) Repo {
+            return .{};
+        }
+
+        pub fn parseWriteInput(_: *context_mod.Context, _: []const u8) !WriteInput {
+            return .{};
+        }
+
+        pub fn normalizeSortBy(sort_by: []const u8) ![]const u8 {
+            if (std.mem.eql(u8, sort_by, "id")) return sort_by;
+            return error.BadRequest;
+        }
+    };
+
+    const CrudHandler = Interface(Record, WriteInput, i64, Repo);
+    const Handler = CrudHandler.bind(FakeHandler);
+
+    var bad_page_ctx = testContext(testing.allocator, .GET, "/devices?page=0", "", null);
+    defer bad_page_ctx.deinit();
+    try testing.expectError(error.BadRequest, Handler.list(&bad_page_ctx));
+
+    var bad_sort_ctx = testContext(testing.allocator, .GET, "/devices?sort_order=sideways", "", null);
+    defer bad_sort_ctx.deinit();
+    try testing.expectError(error.BadRequest, Handler.list(&bad_sort_ctx));
+
+    var bad_field_ctx = testContext(testing.allocator, .GET, "/devices?sort_by=name", "", null);
+    defer bad_field_ctx.deinit();
+    try testing.expectError(error.BadRequest, Handler.list(&bad_field_ctx));
 }
 
 fn testContext(

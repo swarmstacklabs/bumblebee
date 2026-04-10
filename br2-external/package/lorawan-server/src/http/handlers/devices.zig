@@ -4,6 +4,7 @@ const app_mod = @import("../../app.zig");
 const device_repository = @import("../../repository/device_repository.zig");
 const crud_handler = @import("crud_handler.zig");
 const context_mod = @import("../context.zig");
+const crud_repository = @import("../../repository/crud_repository.zig");
 
 pub const CRUDHandler = crud_handler.Interface(
     app_mod.DeviceRecord,
@@ -14,6 +15,10 @@ pub const CRUDHandler = crud_handler.Interface(
 
 const Handler = CRUDHandler.bind(struct {
     pub const entity_name = "device";
+    pub const default_page_size: usize = 50;
+    pub const max_page_size: usize = 100;
+    pub const default_sort_by = "id";
+    pub const default_sort_order = crud_repository.SortOrder.asc;
 
     pub fn repo(ctx: *context_mod.Context) device_repository.CRUDRepository {
         return ctx.services.device_repo;
@@ -23,8 +28,14 @@ const Handler = CRUDHandler.bind(struct {
         return parseDeviceWriteInput(ctx, body);
     }
 
-    pub fn normalizeList(_: *context_mod.Context, devices: []app_mod.DeviceRecord) !void {
-        std.mem.reverse(app_mod.DeviceRecord, devices);
+    pub fn normalizeSortBy(sort_by: []const u8) ![]const u8 {
+        if (std.mem.eql(u8, sort_by, "id")) return sort_by;
+        if (std.mem.eql(u8, sort_by, "name")) return sort_by;
+        if (std.mem.eql(u8, sort_by, "dev_eui")) return sort_by;
+        if (std.mem.eql(u8, sort_by, "app_eui")) return sort_by;
+        if (std.mem.eql(u8, sort_by, "created_at")) return sort_by;
+        if (std.mem.eql(u8, sort_by, "updated_at")) return sort_by;
+        return error.BadRequest;
     }
 });
 
