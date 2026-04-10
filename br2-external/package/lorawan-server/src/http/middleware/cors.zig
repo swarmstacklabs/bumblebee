@@ -8,7 +8,7 @@ pub fn middleware(ctx: *context_mod.Context, exec: *runtime.Executor) runtime.Ap
     try ctx.res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, PATCH, OPTIONS");
 
     if (ctx.req.method == request_mod.Method.OPTIONS) {
-        ctx.res.setText(204, "");
+        ctx.res.setText(.no_content, "");
         return;
     }
 

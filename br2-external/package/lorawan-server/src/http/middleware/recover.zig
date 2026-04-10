@@ -7,10 +7,10 @@ pub fn middleware(ctx: *context_mod.Context, exec: *runtime.Executor) runtime.Ap
     exec.next(ctx) catch |err| switch (err) {
         error.Unauthorized => {
             try ctx.res.setHeader("WWW-Authenticate", "Basic realm=\"lorawan-server\"");
-            ctx.res.setText(401, "unauthorized\n");
+            ctx.res.setText(.unauthorized, "unauthorized\n");
         },
         error.BadRequest => {
-            try ctx.res.setJsonStatus(400, app_mod.ErrorResponse{ .@"error" = "bad request" });
+            try ctx.res.setJsonStatus(.bad_request, app_mod.ErrorResponse{ .@"error" = "bad request" });
         },
         else => {
             logger.err("http", "request_failed", "http request failed", .{
@@ -18,7 +18,7 @@ pub fn middleware(ctx: *context_mod.Context, exec: *runtime.Executor) runtime.Ap
                 .error_name = @errorName(err),
                 .request_id = ctx.request_id,
             });
-            ctx.res.setText(500, "internal server error\n");
+            ctx.res.setText(.internal_server_error, "internal server error\n");
         },
     };
 }

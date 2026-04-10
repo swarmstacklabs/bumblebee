@@ -16,7 +16,7 @@ pub fn middleware(ctx: *context_mod.Context, exec: *runtime.Executor) runtime.Ap
     logger.info("http", "request_finished", "http request finished", .{
         .method = @tagName(ctx.req.method),
         .path = ctx.req.path,
-        .status = ctx.res.status,
+        .status = ctx.res.status.code(),
         .request_id = ctx.request_id,
     });
 }

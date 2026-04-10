@@ -29,7 +29,7 @@ pub fn list(ctx: *context_mod.Context) !void {
     }
     try out.appendSlice(ctx.allocator, "]\n");
 
-    ctx.res.setOwnedBody(200, "application/json", try out.toOwnedSlice(ctx.allocator));
+    ctx.res.setOwnedBody(.ok, "application/json", try out.toOwnedSlice(ctx.allocator));
 }
 
 pub fn get(ctx: *context_mod.Context) !void {
@@ -37,7 +37,7 @@ pub fn get(ctx: *context_mod.Context) !void {
     const repo = ctx.services.device_repo;
     const maybe_device = try repo.get(ctx.allocator, id);
     if (maybe_device == null) {
-        try ctx.res.setJsonStatus(404, app_mod.ErrorResponse{ .@"error" = "device not found" });
+        try ctx.res.setJsonStatus(.not_found, app_mod.ErrorResponse{ .@"error" = "device not found" });
         return;
     }
     const device = maybe_device.?;
@@ -52,11 +52,11 @@ pub fn create(ctx: *context_mod.Context) !void {
 
     const repo = ctx.services.device_repo;
     repo.create(write_input) catch {
-        try ctx.res.setJsonStatus(409, app_mod.ErrorResponse{ .@"error" = "device already exists or could not be created" });
+        try ctx.res.setJsonStatus(.conflict, app_mod.ErrorResponse{ .@"error" = "device already exists or could not be created" });
         return;
     };
 
-    try ctx.res.setJsonStatus(201, app_mod.StatusResponse{ .status = "created" });
+    try ctx.res.setJsonStatus(.created, app_mod.StatusResponse{ .status = "created" });
 }
 
 pub fn update(ctx: *context_mod.Context) !void {
@@ -67,7 +67,7 @@ pub fn update(ctx: *context_mod.Context) !void {
     const repo = ctx.services.device_repo;
     const updated = try repo.update(id, write_input);
     if (!updated) {
-        try ctx.res.setJsonStatus(404, app_mod.ErrorResponse{ .@"error" = "device not found" });
+        try ctx.res.setJsonStatus(.not_found, app_mod.ErrorResponse{ .@"error" = "device not found" });
         return;
     }
 
@@ -79,7 +79,7 @@ pub fn delete(ctx: *context_mod.Context) !void {
     const repo = ctx.services.device_repo;
     const deleted = try repo.delete(id);
     if (!deleted) {
-        try ctx.res.setJsonStatus(404, app_mod.ErrorResponse{ .@"error" = "device not found" });
+        try ctx.res.setJsonStatus(.not_found, app_mod.ErrorResponse{ .@"error" = "device not found" });
         return;
     }
 

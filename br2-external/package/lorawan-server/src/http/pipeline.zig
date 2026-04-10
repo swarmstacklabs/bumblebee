@@ -10,11 +10,11 @@ pub const Dispatcher = struct {
         const matched = try self.router.match(ctx.req);
         switch (matched) {
             .not_found => {
-                ctx.res.setText(404, "not found\n");
+                ctx.res.setText(.not_found, "not found\n");
                 return;
             },
             .method_not_allowed => {
-                ctx.res.setText(405, "method not allowed\n");
+                ctx.res.setText(.method_not_allowed, "method not allowed\n");
                 return;
             },
             .matched => |result| {

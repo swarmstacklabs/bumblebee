@@ -133,8 +133,9 @@ pub fn serviceReadyClient(app: *App, runtime_config: *const Config, conn: *Conne
                     .path = req.path,
                     .error_name = @errorName(err),
                 });
-                ctx.res.setText(500, "internal server error\n");
+                ctx.res.setText(.internal_server_error, "internal server error\n");
             };
+            ctx.res.prepare(req);
             try ctx.res.writeTo(conn);
             return true;
         }
