@@ -585,14 +585,7 @@ const TestHarness = struct {
         var app = try App.init(allocator, db_path);
         errdefer app.deinit();
 
-        var cfg = Config{
-            .allocator = allocator,
-            .bind_address = "0.0.0.0",
-            .udp_port = 0,
-            .http_port = 0,
-            .db_path = db_path,
-            .admin = .{ .user = null, .pass = null },
-        };
+        var cfg = Config.init(allocator, "0.0.0.0", 0, 0, db_path, app_mod.AdminConfig.init(null, null));
 
         const socket = initServerSocket(&cfg) catch |err| switch (err) {
             error.Unexpected, error.AccessDenied => return error.SkipZigTest,

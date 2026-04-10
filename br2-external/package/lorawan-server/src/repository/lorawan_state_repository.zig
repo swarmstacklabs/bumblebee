@@ -12,6 +12,8 @@ pub const Repository = struct {
         return .{ .db = db };
     }
 
+    pub fn deinit(_: Repository) void {}
+
     pub fn loadGateway(self: Repository, allocator: std.mem.Allocator, gateway_mac_hex: []const u8) !?types.Gateway {
         self.db.mutex.lock();
         defer self.db.mutex.unlock();
@@ -27,11 +29,11 @@ pub const Repository = struct {
         const parsed = try std.json.parseFromSlice(std.json.Value, allocator, gateway_json, .{ .ignore_unknown_fields = true });
         defer parsed.deinit();
 
-        return .{
-            .mac = try parseHexArray(8, stmt.readText(0).?),
-            .network_name = try allocator.dupe(u8, network_name),
-            .tx_rfch = jsonOptionalU8(parsed.value.object, "tx_rfch") orelse 0,
-        };
+        return types.Gateway.init(
+            try parseHexArray(8, stmt.readText(0).?),
+            jsonOptionalU8(parsed.value.object, "tx_rfch") orelse 0,
+            try allocator.dupe(u8, network_name),
+        );
     }
 
     pub fn loadNetworkByName(self: Repository, allocator: std.mem.Allocator, name: []const u8) !?types.Network {
@@ -49,15 +51,15 @@ pub const Repository = struct {
         defer parsed.deinit();
         const object = parsed.value.object;
 
-        return .{
-            .name = try allocator.dupe(u8, stmt.readText(0).?),
-            .net_id = try parseHexArray(3, try jsonRequiredString(object, "netid")),
-            .tx_codr = try allocator.dupe(u8, jsonOptionalString(object, "tx_codr") orelse "4/5"),
-            .join1_delay_s = jsonOptionalU32(object, "join1_delay") orelse 5,
-            .rx1_delay_s = jsonOptionalU32(object, "rx1_delay") orelse 1,
-            .gw_power = jsonOptionalI32(object, "gw_power") orelse 14,
-            .rxwin_init = parseRxWindow(object.get("rxwin_init")),
-        };
+        return types.Network.init(
+            try allocator.dupe(u8, stmt.readText(0).?),
+            try parseHexArray(3, try jsonRequiredString(object, "netid")),
+            try allocator.dupe(u8, jsonOptionalString(object, "tx_codr") orelse "4/5"),
+            jsonOptionalU32(object, "join1_delay") orelse 5,
+            jsonOptionalU32(object, "rx1_delay") orelse 1,
+            jsonOptionalI32(object, "gw_power") orelse 14,
+            parseRxWindow(object.get("rxwin_init")),
+        );
     }
 
     pub fn findDeviceByDevEui(self: Repository, allocator: std.mem.Allocator, dev_eui: [8]u8) !?types.Device {
@@ -78,15 +80,15 @@ pub const Repository = struct {
         defer parsed.deinit();
         const object = parsed.value.object;
 
-        return .{
-            .id = stmt.readInt64(0),
-            .name = try allocator.dupe(u8, stmt.readText(1).?),
-            .dev_eui = try parseHexArray(8, stmt.readText(2).?),
-            .app_eui = try parseHexArray(8, stmt.readText(3).?),
-            .app_key = try parseHexArray(16, stmt.readText(4).?),
-            .network_name = if (jsonOptionalString(object, "network_name")) |value| try allocator.dupe(u8, value) else null,
-            .dev_addr_hint = if (jsonOptionalString(object, "dev_addr")) |value| try parseHexArray(4, value) else null,
-        };
+        return types.Device.init(
+            stmt.readInt64(0),
+            try allocator.dupe(u8, stmt.readText(1).?),
+            try parseHexArray(8, stmt.readText(2).?),
+            try parseHexArray(8, stmt.readText(3).?),
+            try parseHexArray(16, stmt.readText(4).?),
+            if (jsonOptionalString(object, "network_name")) |value| try allocator.dupe(u8, value) else null,
+            if (jsonOptionalString(object, "dev_addr")) |value| try parseHexArray(4, value) else null,
+        );
     }
 
     pub fn findNodeByDevAddr(self: Repository, allocator: std.mem.Allocator, dev_addr: [4]u8) !?types.Node {
@@ -112,10 +114,10 @@ pub const Repository = struct {
             try parseHexArray(16, try jsonRequiredString(object, "appskey")),
             try parseHexArray(16, try jsonRequiredString(object, "nwkskey")),
             parseRxWindow(object.get("rxwin_use")),
-            .{
-                .tx_power = jsonOptionalI32(object, "adr_tx_power") orelse 14,
-                .data_rate = jsonOptionalU8(object, "adr_data_rate") orelse 0,
-            },
+            types.AdrConfig.init(
+                jsonOptionalI32(object, "adr_tx_power") orelse 14,
+                jsonOptionalU8(object, "adr_data_rate") orelse 0,
+            ),
         );
         node.id = stmt.readInt64(0);
         node.device_id = if (stmt.columnType(1) == storage.c.SQLITE_NULL) null else stmt.readInt64(1);
@@ -149,10 +151,7 @@ pub const Repository = struct {
     }
 
     pub fn createNodeForJoin(self: Repository, allocator: std.mem.Allocator, device: types.Device, network: types.Network, dev_addr: [4]u8, app_s_key: [16]u8, nwk_s_key: [16]u8) !types.Node {
-        var node = types.Node.init(dev_addr, app_s_key, nwk_s_key, network.rxwin_init, .{
-            .tx_power = network.gw_power,
-            .data_rate = 0,
-        });
+        var node = types.Node.init(dev_addr, app_s_key, nwk_s_key, network.rxwin_init, types.AdrConfig.init(network.gw_power, 0));
         node.device_id = device.id;
         node.dev_eui = device.dev_eui;
         try self.upsertNode(allocator, node);
@@ -188,13 +187,13 @@ fn encodeNodeJson(allocator: std.mem.Allocator, node: types.Node) ![]u8 {
 }
 
 fn parseRxWindow(value: ?std.json.Value) types.RxWindowConfig {
-    const root = value orelse return .{};
-    if (root != .object) return .{};
-    return .{
-        .rx1_dr_offset = jsonOptionalU8(root.object, "rx1_dr_offset") orelse 0,
-        .rx2_data_rate = jsonOptionalU8(root.object, "rx2_data_rate") orelse 0,
-        .frequency = jsonOptionalF64(root.object, "frequency") orelse 869.525,
-    };
+    const root = value orelse return types.RxWindowConfig.init(0, 0, 869.525);
+    if (root != .object) return types.RxWindowConfig.init(0, 0, 869.525);
+    return types.RxWindowConfig.init(
+        jsonOptionalU8(root.object, "rx1_dr_offset") orelse 0,
+        jsonOptionalU8(root.object, "rx2_data_rate") orelse 0,
+        jsonOptionalF64(root.object, "frequency") orelse 869.525,
+    );
 }
 
 fn jsonRequiredString(object: std.json.ObjectMap, key: []const u8) ![]const u8 {

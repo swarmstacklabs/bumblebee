@@ -119,7 +119,7 @@ pub const Response = struct {
                 return;
             }
         }
-        try self.headers.append(self.allocator, .{ .name = name, .value = value });
+        try self.headers.append(self.allocator, request_mod.Header.init(name, value));
     }
 
     pub fn writeTo(self: *const Response, conn: *http_transport.Connection) !void {
@@ -180,11 +180,5 @@ test "prepare keeps head content length while suppressing body" {
 }
 
 fn testRequest(method: request_mod.Method) request_mod.Request {
-    return .{
-        .method = method,
-        .target = "/",
-        .path = "/",
-        .body = "",
-        .headers = &.{},
-    };
+    return request_mod.Request.init(method, "/", "/", "", &.{});
 }

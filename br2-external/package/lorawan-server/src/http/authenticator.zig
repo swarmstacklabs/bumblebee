@@ -9,6 +9,8 @@ pub const Authenticator = struct {
         return .{ .admin = admin };
     }
 
+    pub fn deinit(_: Authenticator) void {}
+
     pub fn authenticateBasic(self: Authenticator, allocator: std.mem.Allocator, header: ?[]const u8) !?[]const u8 {
         if (!self.admin.isConfigured()) return "anonymous";
 

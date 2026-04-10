@@ -12,6 +12,15 @@ pub const GatewayTarget = struct {
     pending_token: ?u16,
     pending_json: ?[]u8,
 
+    pub fn init(addr: posix.sockaddr.in, semtech_version: ?u8, pending_token: ?u16, pending_json: ?[]u8) GatewayTarget {
+        return .{
+            .addr = addr,
+            .semtech_version = semtech_version,
+            .pending_token = pending_token,
+            .pending_json = pending_json,
+        };
+    }
+
     pub fn deinit(self: GatewayTarget, allocator: std.mem.Allocator) void {
         if (self.pending_json) |value| allocator.free(value);
     }
@@ -28,6 +37,20 @@ pub const RuntimeRecord = struct {
     pending_downlink_json: ?[]u8,
     updated_at: ?[]u8,
 
+    pub fn init(gateway_mac: [8]u8, semtech_version: ?u8, last_seen_at: ?[]u8, last_seen_unix_ms: ?i64, peer_address: ?[]u8, peer_port: ?u16, pending_downlink_token: ?u16, pending_downlink_json: ?[]u8, updated_at: ?[]u8) RuntimeRecord {
+        return .{
+            .gateway_mac = gateway_mac,
+            .semtech_version = semtech_version,
+            .last_seen_at = last_seen_at,
+            .last_seen_unix_ms = last_seen_unix_ms,
+            .peer_address = peer_address,
+            .peer_port = peer_port,
+            .pending_downlink_token = pending_downlink_token,
+            .pending_downlink_json = pending_downlink_json,
+            .updated_at = updated_at,
+        };
+    }
+
     pub fn deinit(self: RuntimeRecord, allocator: std.mem.Allocator) void {
         if (self.last_seen_at) |value| allocator.free(value);
         if (self.peer_address) |value| allocator.free(value);
@@ -42,6 +65,8 @@ pub const Repository = struct {
     pub fn init(db: Database) Repository {
         return .{ .db = db };
     }
+
+    pub fn deinit(_: Repository) void {}
 
     pub fn upsertRuntime(self: Repository, gateway_mac: [8]u8, version: u8, client_addr: *const posix.sockaddr.in, token: ?u16, pending_json: ?[]const u8) !void {
         const peer_ip = formatPeerIp(client_addr);
@@ -135,17 +160,17 @@ pub const Repository = struct {
         const parsed_ip = try parseIpv4(ip_text);
         const pending_text = stmt.readText(4);
 
-        return .{
-            .addr = .{
+        return GatewayTarget.init(
+            .{
                 .family = posix.AF.INET,
                 .port = std.mem.nativeToBig(u16, @intCast(port)),
                 .addr = parsed_ip,
                 .zero = [_]u8{0} ** 8,
             },
-            .semtech_version = optionalU8Column(stmt, 2),
-            .pending_token = optionalU16Column(stmt, 3),
-            .pending_json = if (pending_text) |value| try self.db.allocator.dupe(u8, value) else null,
-        };
+            optionalU8Column(stmt, 2),
+            optionalU16Column(stmt, 3),
+            if (pending_text) |value| try self.db.allocator.dupe(u8, value) else null,
+        );
     }
 
     pub fn get(self: Repository, gateway_mac: [8]u8) !?RuntimeRecord {
@@ -164,17 +189,17 @@ pub const Repository = struct {
         stmt.bindText(1, gateway_hex[0..]);
         if (stmt.step() != storage.c.SQLITE_ROW) return null;
 
-        return .{
-            .gateway_mac = gateway_mac,
-            .semtech_version = optionalU8Column(stmt, 0),
-            .last_seen_at = try dupOptionalText(self.db.allocator, stmt, 1),
-            .last_seen_unix_ms = optionalI64Column(stmt, 2),
-            .peer_address = try dupOptionalText(self.db.allocator, stmt, 3),
-            .peer_port = optionalU16Column(stmt, 4),
-            .pending_downlink_token = optionalU16Column(stmt, 5),
-            .pending_downlink_json = try dupOptionalText(self.db.allocator, stmt, 6),
-            .updated_at = try dupOptionalText(self.db.allocator, stmt, 7),
-        };
+        return RuntimeRecord.init(
+            gateway_mac,
+            optionalU8Column(stmt, 0),
+            try dupOptionalText(self.db.allocator, stmt, 1),
+            optionalI64Column(stmt, 2),
+            try dupOptionalText(self.db.allocator, stmt, 3),
+            optionalU16Column(stmt, 4),
+            optionalU16Column(stmt, 5),
+            try dupOptionalText(self.db.allocator, stmt, 6),
+            try dupOptionalText(self.db.allocator, stmt, 7),
+        );
     }
 
     pub fn list(self: Repository, allocator: std.mem.Allocator) ![]RuntimeRecord {
@@ -196,17 +221,17 @@ pub const Repository = struct {
 
         while (stmt.step() == storage.c.SQLITE_ROW) {
             const gateway_hex = stmt.readText(0) orelse return error.InvalidGatewayMac;
-            try out.append(allocator, .{
-                .gateway_mac = try parseGatewayMacHex(gateway_hex),
-                .semtech_version = optionalU8Column(stmt, 1),
-                .last_seen_at = try dupOptionalText(allocator, stmt, 2),
-                .last_seen_unix_ms = optionalI64Column(stmt, 3),
-                .peer_address = try dupOptionalText(allocator, stmt, 4),
-                .peer_port = optionalU16Column(stmt, 5),
-                .pending_downlink_token = optionalU16Column(stmt, 6),
-                .pending_downlink_json = try dupOptionalText(allocator, stmt, 7),
-                .updated_at = try dupOptionalText(allocator, stmt, 8),
-            });
+            try out.append(allocator, RuntimeRecord.init(
+                try parseGatewayMacHex(gateway_hex),
+                optionalU8Column(stmt, 1),
+                try dupOptionalText(allocator, stmt, 2),
+                optionalI64Column(stmt, 3),
+                try dupOptionalText(allocator, stmt, 4),
+                optionalU16Column(stmt, 5),
+                optionalU16Column(stmt, 6),
+                try dupOptionalText(allocator, stmt, 7),
+                try dupOptionalText(allocator, stmt, 8),
+            ));
         }
 
         return out.toOwnedSlice(allocator);

@@ -9,12 +9,16 @@ pub const c = @cImport({
 pub const Statement = struct {
     raw: *c.sqlite3_stmt,
 
+    pub fn init(raw: *c.sqlite3_stmt) Statement {
+        return .{ .raw = raw };
+    }
+
     pub fn prepare(db: *c.sqlite3, sql: []const u8) !Statement {
         var stmt: ?*c.sqlite3_stmt = null;
         if (c.sqlite3_prepare_v2(db, sql.ptr, @as(c_int, @intCast(sql.len)), &stmt, null) != c.SQLITE_OK) {
             return error.SqlitePrepareFailed;
         }
-        return .{ .raw = stmt.? };
+        return Statement.init(stmt.?);
     }
 
     pub fn deinit(self: Statement) void {
@@ -73,10 +77,22 @@ pub fn changes(db: *c.sqlite3) c_int {
 
 pub const StatusResponse = struct {
     status: []const u8,
+
+    pub fn init(status: []const u8) StatusResponse {
+        return .{ .status = status };
+    }
+
+    pub fn deinit(_: StatusResponse) void {}
 };
 
 pub const ErrorResponse = struct {
     @"error": []const u8,
+
+    pub fn init(message: []const u8) ErrorResponse {
+        return .{ .@"error" = message };
+    }
+
+    pub fn deinit(_: ErrorResponse) void {}
 };
 
 pub const DeviceRecord = struct {
@@ -87,6 +103,18 @@ pub const DeviceRecord = struct {
     app_key: []const u8,
     created_at: []const u8,
     updated_at: []const u8,
+
+    pub fn init(id: i64, name: []const u8, dev_eui: []const u8, app_eui: []const u8, app_key: []const u8, created_at: []const u8, updated_at: []const u8) DeviceRecord {
+        return .{
+            .id = id,
+            .name = name,
+            .dev_eui = dev_eui,
+            .app_eui = app_eui,
+            .app_key = app_key,
+            .created_at = created_at,
+            .updated_at = updated_at,
+        };
+    }
 
     pub fn deinit(self: DeviceRecord, allocator: std.mem.Allocator) void {
         allocator.free(self.name);
@@ -104,6 +132,15 @@ pub const DeviceWriteInput = struct {
     app_eui: []const u8,
     app_key: []const u8,
 
+    pub fn init(name: []const u8, dev_eui: []const u8, app_eui: []const u8, app_key: []const u8) DeviceWriteInput {
+        return .{
+            .name = name,
+            .dev_eui = dev_eui,
+            .app_eui = app_eui,
+            .app_key = app_key,
+        };
+    }
+
     pub fn deinit(self: DeviceWriteInput, allocator: std.mem.Allocator) void {
         allocator.free(self.name);
         allocator.free(self.dev_eui);
@@ -116,6 +153,16 @@ pub const Database = struct {
     allocator: std.mem.Allocator,
     conn: *c.sqlite3,
     mutex: *std.Thread.Mutex,
+
+    pub fn init(allocator: std.mem.Allocator, conn: *c.sqlite3, mutex: *std.Thread.Mutex) Database {
+        return .{
+            .allocator = allocator,
+            .conn = conn,
+            .mutex = mutex,
+        };
+    }
+
+    pub fn deinit(_: Database) void {}
 };
 
 pub const App = struct {
@@ -156,11 +203,7 @@ pub const App = struct {
     }
 
     pub fn database(self: *App) Database {
-        return .{
-            .allocator = self.allocator,
-            .conn = self.db,
-            .mutex = &self.mutex,
-        };
+        return Database.init(self.allocator, self.db, &self.mutex);
     }
 
     pub fn exec(self: *App, sql: []const u8) !void {
@@ -207,6 +250,16 @@ const Migration = struct {
     version: i64,
     name: []const u8,
     sql: []const u8,
+
+    fn init(version: i64, name: []const u8, sql: []const u8) Migration {
+        return .{
+            .version = version,
+            .name = name,
+            .sql = sql,
+        };
+    }
+
+    fn deinit(_: Migration) void {}
 };
 
 const schema_migrations_sql =

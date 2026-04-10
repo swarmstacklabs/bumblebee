@@ -6,11 +6,32 @@ pub const Entry = struct {
     gateway_mac: [8]u8,
     dev_addr: ?[]u8,
     sent_at_ms: i64,
+
+    pub fn init(gateway_mac: [8]u8, dev_addr: ?[]u8, sent_at_ms: i64) Entry {
+        return .{
+            .gateway_mac = gateway_mac,
+            .dev_addr = dev_addr,
+            .sent_at_ms = sent_at_ms,
+        };
+    }
+
+    pub fn deinit(self: Entry, allocator: std.mem.Allocator) void {
+        if (self.dev_addr) |value| allocator.free(value);
+    }
 };
 
 pub const Key = struct {
     gateway_mac: [8]u8,
     token: u16,
+
+    pub fn init(gateway_mac: [8]u8, token: u16) Key {
+        return .{
+            .gateway_mac = gateway_mac,
+            .token = token,
+        };
+    }
+
+    pub fn deinit(_: Key) void {}
 };
 
 pub const Tracker = struct {
@@ -34,23 +55,20 @@ pub const Tracker = struct {
     }
 
     pub fn remember(self: *Tracker, gateway_mac: [8]u8, token: u16, dev_addr: ?[]const u8) !void {
-        const entry = Entry{
-            .gateway_mac = gateway_mac,
-            .dev_addr = if (dev_addr) |value| try self.allocator.dupe(u8, value) else null,
-            .sent_at_ms = std.time.milliTimestamp(),
-        };
-        errdefer freeEntry(self.allocator, entry);
+        const entry = Entry.init(
+            gateway_mac,
+            if (dev_addr) |value| try self.allocator.dupe(u8, value) else null,
+            std.time.milliTimestamp(),
+        );
+        errdefer entry.deinit(self.allocator);
 
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const key = Key{
-            .gateway_mac = gateway_mac,
-            .token = token,
-        };
+        const key = Key.init(gateway_mac, token);
 
         if (self.pending.fetchRemove(key)) |removed| {
-            freeEntry(self.allocator, removed.value);
+            removed.value.deinit(self.allocator);
         }
         try self.pending.put(key, entry);
     }
@@ -59,10 +77,7 @@ pub const Tracker = struct {
         self.mutex.lock();
         defer self.mutex.unlock();
 
-        const removed = self.pending.fetchRemove(.{
-            .gateway_mac = gateway_mac,
-            .token = token,
-        }) orelse return null;
+        const removed = self.pending.fetchRemove(Key.init(gateway_mac, token)) orelse return null;
         return removed.value;
     }
 
@@ -83,14 +98,14 @@ pub const Tracker = struct {
 
         for (to_remove.items) |key| {
             if (self.pending.fetchRemove(key)) |removed| {
-                freeEntry(self.allocator, removed.value);
+                removed.value.deinit(self.allocator);
             }
         }
     }
 };
 
 pub fn freeEntry(allocator: std.mem.Allocator, entry: Entry) void {
-    if (entry.dev_addr) |value| allocator.free(value);
+    entry.deinit(allocator);
 }
 
 pub fn randomToken() u16 {

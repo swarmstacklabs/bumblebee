@@ -37,7 +37,7 @@ pub fn get(ctx: *context_mod.Context) !void {
     const repo = ctx.services.device_repo;
     const maybe_device = try repo.get(ctx.allocator, id);
     if (maybe_device == null) {
-        try ctx.res.setJsonStatus(.not_found, app_mod.ErrorResponse{ .@"error" = "device not found" });
+        try ctx.res.setJsonStatus(.not_found, app_mod.ErrorResponse.init("device not found"));
         return;
     }
     const device = maybe_device.?;
@@ -52,11 +52,11 @@ pub fn create(ctx: *context_mod.Context) !void {
 
     const repo = ctx.services.device_repo;
     repo.create(write_input) catch {
-        try ctx.res.setJsonStatus(.conflict, app_mod.ErrorResponse{ .@"error" = "device already exists or could not be created" });
+        try ctx.res.setJsonStatus(.conflict, app_mod.ErrorResponse.init("device already exists or could not be created"));
         return;
     };
 
-    try ctx.res.setJsonStatus(.created, app_mod.StatusResponse{ .status = "created" });
+    try ctx.res.setJsonStatus(.created, app_mod.StatusResponse.init("created"));
 }
 
 pub fn update(ctx: *context_mod.Context) !void {
@@ -67,11 +67,11 @@ pub fn update(ctx: *context_mod.Context) !void {
     const repo = ctx.services.device_repo;
     const updated = try repo.update(id, write_input);
     if (!updated) {
-        try ctx.res.setJsonStatus(.not_found, app_mod.ErrorResponse{ .@"error" = "device not found" });
+        try ctx.res.setJsonStatus(.not_found, app_mod.ErrorResponse.init("device not found"));
         return;
     }
 
-    try ctx.res.setJson(app_mod.StatusResponse{ .status = "updated" });
+    try ctx.res.setJson(app_mod.StatusResponse.init("updated"));
 }
 
 pub fn delete(ctx: *context_mod.Context) !void {
@@ -79,11 +79,11 @@ pub fn delete(ctx: *context_mod.Context) !void {
     const repo = ctx.services.device_repo;
     const deleted = try repo.delete(id);
     if (!deleted) {
-        try ctx.res.setJsonStatus(.not_found, app_mod.ErrorResponse{ .@"error" = "device not found" });
+        try ctx.res.setJsonStatus(.not_found, app_mod.ErrorResponse.init("device not found"));
         return;
     }
 
-    try ctx.res.setJson(app_mod.StatusResponse{ .status = "deleted" });
+    try ctx.res.setJson(app_mod.StatusResponse.init("deleted"));
 }
 
 fn parseDeviceWriteInput(ctx: *context_mod.Context, body: []const u8) !app_mod.DeviceWriteInput {
@@ -92,12 +92,12 @@ fn parseDeviceWriteInput(ctx: *context_mod.Context, body: []const u8) !app_mod.D
     });
     defer parsed.deinit();
 
-    return .{
-        .name = try ctx.allocator.dupe(u8, parsed.value.name),
-        .dev_eui = try ctx.allocator.dupe(u8, parsed.value.dev_eui),
-        .app_eui = try ctx.allocator.dupe(u8, parsed.value.app_eui),
-        .app_key = try ctx.allocator.dupe(u8, parsed.value.app_key),
-    };
+    return app_mod.DeviceWriteInput.init(
+        try ctx.allocator.dupe(u8, parsed.value.name),
+        try ctx.allocator.dupe(u8, parsed.value.dev_eui),
+        try ctx.allocator.dupe(u8, parsed.value.app_eui),
+        try ctx.allocator.dupe(u8, parsed.value.app_key),
+    );
 }
 
 fn parseRouteId(ctx: *context_mod.Context) !i64 {

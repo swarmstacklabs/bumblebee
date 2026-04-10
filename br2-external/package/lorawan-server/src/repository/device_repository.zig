@@ -16,6 +16,8 @@ pub const Repository = struct {
         return .{ .db = db };
     }
 
+    pub fn deinit(_: Repository) void {}
+
     pub fn list(self: Repository, allocator: std.mem.Allocator) ![]DeviceRecord {
         self.db.mutex.lock();
         defer self.db.mutex.unlock();
@@ -107,15 +109,15 @@ pub fn crud(db: Database) CRUDRepository {
 }
 
 fn rowToDevice(allocator: std.mem.Allocator, stmt: storage.Statement) !DeviceRecord {
-    return .{
-        .id = stmt.readInt64(0),
-        .name = try dupColumnText(allocator, stmt, 1),
-        .dev_eui = try dupColumnText(allocator, stmt, 2),
-        .app_eui = try dupColumnText(allocator, stmt, 3),
-        .app_key = try dupColumnText(allocator, stmt, 4),
-        .created_at = try dupColumnText(allocator, stmt, 5),
-        .updated_at = try dupColumnText(allocator, stmt, 6),
-    };
+    return DeviceRecord.init(
+        stmt.readInt64(0),
+        try dupColumnText(allocator, stmt, 1),
+        try dupColumnText(allocator, stmt, 2),
+        try dupColumnText(allocator, stmt, 3),
+        try dupColumnText(allocator, stmt, 4),
+        try dupColumnText(allocator, stmt, 5),
+        try dupColumnText(allocator, stmt, 6),
+    );
 }
 
 fn dupColumnText(allocator: std.mem.Allocator, stmt: storage.Statement, column: c_int) ![]u8 {

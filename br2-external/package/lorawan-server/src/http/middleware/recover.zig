@@ -10,7 +10,7 @@ pub fn middleware(ctx: *context_mod.Context, exec: *runtime.Executor) runtime.Ap
             ctx.res.setText(.unauthorized, "unauthorized\n");
         },
         error.BadRequest => {
-            try ctx.res.setJsonStatus(.bad_request, app_mod.ErrorResponse{ .@"error" = "bad request" });
+            try ctx.res.setJsonStatus(.bad_request, app_mod.ErrorResponse.init("bad request"));
         },
         else => {
             logger.err("http", "request_failed", "http request failed", .{

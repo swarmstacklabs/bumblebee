@@ -7,6 +7,12 @@ const services_mod = @import("services.zig");
 pub const RouteParam = struct {
     name: []const u8,
     value: []const u8,
+
+    pub fn init(name: []const u8, value: []const u8) RouteParam {
+        return .{ .name = name, .value = value };
+    }
+
+    pub fn deinit(_: RouteParam) void {}
 };
 
 pub const Context = struct {

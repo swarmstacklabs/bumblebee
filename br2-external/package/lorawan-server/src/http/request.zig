@@ -15,6 +15,12 @@ pub const Method = enum {
 pub const Header = struct {
     name: []const u8,
     value: []const u8,
+
+    pub fn init(name: []const u8, value: []const u8) Header {
+        return .{ .name = name, .value = value };
+    }
+
+    pub fn deinit(_: Header) void {}
 };
 
 pub const Request = struct {
@@ -23,6 +29,18 @@ pub const Request = struct {
     path: []const u8,
     body: []const u8,
     headers: []const Header,
+
+    pub fn init(method: Method, target: []const u8, path: []const u8, body: []const u8, headers: []const Header) Request {
+        return .{
+            .method = method,
+            .target = target,
+            .path = path,
+            .body = body,
+            .headers = headers,
+        };
+    }
+
+    pub fn deinit(_: Request) void {}
 
     pub fn header(self: Request, name: []const u8) ?[]const u8 {
         for (self.headers) |entry| {
@@ -48,20 +66,14 @@ pub fn parse(raw: []const u8, body_start: usize, header_buf: []Header) !Request 
         const sep = std.mem.indexOfScalar(u8, line, ':') orelse return error.BadRequest;
         if (header_count >= header_buf.len) return error.TooManyHeaders;
 
-        header_buf[header_count] = .{
-            .name = std.mem.trim(u8, line[0..sep], " \t"),
-            .value = std.mem.trim(u8, line[sep + 1 ..], " \t"),
-        };
+        header_buf[header_count] = Header.init(
+            std.mem.trim(u8, line[0..sep], " \t"),
+            std.mem.trim(u8, line[sep + 1 ..], " \t"),
+        );
         header_count += 1;
     }
 
-    return .{
-        .method = parseMethod(method_text),
-        .target = target,
-        .path = stripQuery(target),
-        .body = raw[body_start..],
-        .headers = header_buf[0..header_count],
-    };
+    return Request.init(parseMethod(method_text), target, stripQuery(target), raw[body_start..], header_buf[0..header_count]);
 }
 
 pub fn parseConnection(conn: *const http_transport.Connection, header_buf: []Header) !Request {

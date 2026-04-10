@@ -16,6 +16,10 @@ pub const AdminConfig = struct {
     user: ?[]u8,
     pass: ?[]u8,
 
+    pub fn init(user: ?[]u8, pass: ?[]u8) AdminConfig {
+        return .{ .user = user, .pass = pass };
+    }
+
     pub fn deinit(self: *AdminConfig, allocator: std.mem.Allocator) void {
         if (self.user) |value| allocator.free(value);
         if (self.pass) |value| allocator.free(value);
@@ -34,18 +38,29 @@ pub const Config = struct {
     db_path: []u8,
     admin: AdminConfig,
 
-    pub fn load(allocator: std.mem.Allocator) !Config {
-        var cfg = Config{
+    pub fn init(allocator: std.mem.Allocator, bind_address: []const u8, udp_port: u16, http_port: u16, db_path: []u8, admin: AdminConfig) Config {
+        return .{
             .allocator = allocator,
-            .bind_address = default_bind_address,
-            .udp_port = try loadPort(allocator, env_udp_port, default_udp_port),
-            .http_port = try loadPort(allocator, env_http_port, default_http_port),
-            .db_path = try loadOwnedString(allocator, env_db_path, defaultDbPath()),
-            .admin = .{
-                .user = try loadOptionalString(allocator, env_admin_user),
-                .pass = try loadOptionalString(allocator, env_admin_pass),
-            },
+            .bind_address = bind_address,
+            .udp_port = udp_port,
+            .http_port = http_port,
+            .db_path = db_path,
+            .admin = admin,
         };
+    }
+
+    pub fn load(allocator: std.mem.Allocator) !Config {
+        var cfg = Config.init(
+            allocator,
+            default_bind_address,
+            try loadPort(allocator, env_udp_port, default_udp_port),
+            try loadPort(allocator, env_http_port, default_http_port),
+            try loadOwnedString(allocator, env_db_path, defaultDbPath()),
+            AdminConfig.init(
+                try loadOptionalString(allocator, env_admin_user),
+                try loadOptionalString(allocator, env_admin_pass),
+            ),
+        );
         errdefer cfg.deinit();
 
         try cfg.validate();

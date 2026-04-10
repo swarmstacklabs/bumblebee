@@ -12,4 +12,6 @@ pub const Services = struct {
             .authenticator = authenticator_mod.Authenticator.init(config.admin),
         };
     }
+
+    pub fn deinit(_: Services) void {}
 };

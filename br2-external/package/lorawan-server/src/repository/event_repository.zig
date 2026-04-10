@@ -10,6 +10,8 @@ pub const Repository = struct {
         return .{ .db = db };
     }
 
+    pub fn deinit(_: Repository) void {}
+
     pub fn insertGatewayEvent(self: Repository, event_type: []const u8, gateway_mac: [8]u8, payload_json: []u8) !void {
         defer self.db.allocator.free(payload_json);
 

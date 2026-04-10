@@ -9,11 +9,28 @@ pub const Route = struct {
     path: []const u8,
     handler: runtime.HandlerFn,
     middlewares: []const runtime.Middleware = &.{},
+
+    pub fn init(method: request_mod.Method, path: []const u8, handler: runtime.HandlerFn, middlewares: []const runtime.Middleware) Route {
+        return .{
+            .method = method,
+            .path = path,
+            .handler = handler,
+            .middlewares = middlewares,
+        };
+    }
+
+    pub fn deinit(_: Route) void {}
 };
 
 pub const Match = struct {
     route: *const Route,
     params: ParamBuffer,
+
+    pub fn init(route: *const Route, params: ParamBuffer) Match {
+        return .{ .route = route, .params = params };
+    }
+
+    pub fn deinit(_: Match) void {}
 };
 
 pub const MatchResult = union(enum) {
@@ -25,15 +42,18 @@ pub const MatchResult = union(enum) {
 pub const Router = struct {
     routes: []const Route,
 
+    pub fn init(routes: []const Route) Router {
+        return .{ .routes = routes };
+    }
+
+    pub fn deinit(_: Router) void {}
+
     pub fn match(self: *const Router, req: request_mod.Request) !MatchResult {
         var path_matched = false;
         for (self.routes) |*route| {
             if (try matchPath(route.path, req.path)) |params| {
                 if (route.method == req.method) {
-                    return .{ .matched = .{
-                        .route = route,
-                        .params = params,
-                    } };
+                    return .{ .matched = Match.init(route, params) };
                 }
                 path_matched = true;
             }
@@ -47,6 +67,12 @@ const ParamBuffer = struct {
     items: [8]context_mod.RouteParam = undefined,
     len: usize = 0,
 
+    fn init() ParamBuffer {
+        return .{ .len = 0 };
+    }
+
+    fn deinit(_: *ParamBuffer) void {}
+
     fn append(self: *ParamBuffer, param: context_mod.RouteParam) !void {
         if (self.len >= self.items.len) return error.TooManyRouteParams;
         self.items[self.len] = param;
@@ -59,7 +85,7 @@ const ParamBuffer = struct {
 };
 
 fn matchPath(pattern: []const u8, path: []const u8) !?ParamBuffer {
-    var params = ParamBuffer{};
+    var params = ParamBuffer.init();
 
     var pattern_it = std.mem.tokenizeScalar(u8, std.mem.trim(u8, pattern, "/"), '/');
     var path_it = std.mem.tokenizeScalar(u8, std.mem.trim(u8, path, "/"), '/');
@@ -75,10 +101,7 @@ fn matchPath(pattern: []const u8, path: []const u8) !?ParamBuffer {
         const path_value = path_part.?;
 
         if (pattern_value.len > 1 and pattern_value[0] == ':') {
-            try params.append(.{
-                .name = pattern_value[1..],
-                .value = path_value,
-            });
+            try params.append(context_mod.RouteParam.init(pattern_value[1..], path_value));
             continue;
         }
 
@@ -88,22 +111,12 @@ fn matchPath(pattern: []const u8, path: []const u8) !?ParamBuffer {
 
 test "router matches parameterized routes" {
     const routes = [_]Route{
-        .{
-            .method = .GET,
-            .path = "/api/devices/:id",
-            .handler = undefined,
-        },
+        Route.init(.GET, "/api/devices/:id", undefined, &.{}),
     };
 
-    const req = request_mod.Request{
-        .method = .GET,
-        .target = "/api/devices/42",
-        .path = "/api/devices/42",
-        .body = "",
-        .headers = &.{},
-    };
+    const req = request_mod.Request.init(.GET, "/api/devices/42", "/api/devices/42", "", &.{});
 
-    const router = Router{ .routes = &routes };
+    const router = Router.init(&routes);
     const matched = try router.match(req);
     try std.testing.expect(matched == .matched);
     try std.testing.expectEqualStrings("42", matched.matched.params.constSlice()[0].value);

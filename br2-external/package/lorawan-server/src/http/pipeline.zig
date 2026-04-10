@@ -6,6 +6,15 @@ pub const Dispatcher = struct {
     middlewares: []const runtime.Middleware,
     router: router_mod.Router,
 
+    pub fn init(middlewares: []const runtime.Middleware, router: router_mod.Router) Dispatcher {
+        return .{
+            .middlewares = middlewares,
+            .router = router,
+        };
+    }
+
+    pub fn deinit(_: Dispatcher) void {}
+
     pub fn handle(self: *const Dispatcher, ctx: *context_mod.Context) runtime.AppError!void {
         const matched = try self.router.match(ctx.req);
         switch (matched) {
@@ -20,11 +29,7 @@ pub const Dispatcher = struct {
             .matched => |result| {
                 try ctx.setParams(result.params.constSlice());
 
-                var exec = runtime.Executor{
-                    .global_middlewares = self.middlewares,
-                    .route_middlewares = result.route.middlewares,
-                    .handler = result.route.handler,
-                };
+                var exec = runtime.Executor.init(self.middlewares, result.route.middlewares, result.route.handler);
                 try exec.next(ctx);
             },
         }

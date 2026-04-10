@@ -7,6 +7,12 @@ pub const MiddlewareFn = *const fn (*context_mod.Context, *Executor) AppError!vo
 pub const Middleware = struct {
     name: []const u8,
     func: MiddlewareFn,
+
+    pub fn init(name: []const u8, func: MiddlewareFn) Middleware {
+        return .{ .name = name, .func = func };
+    }
+
+    pub fn deinit(_: Middleware) void {}
 };
 
 pub const Executor = struct {
@@ -15,6 +21,16 @@ pub const Executor = struct {
     handler: HandlerFn,
     global_index: usize = 0,
     route_index: usize = 0,
+
+    pub fn init(global_middlewares: []const Middleware, route_middlewares: []const Middleware, handler: HandlerFn) Executor {
+        return .{
+            .global_middlewares = global_middlewares,
+            .route_middlewares = route_middlewares,
+            .handler = handler,
+        };
+    }
+
+    pub fn deinit(_: *Executor) void {}
 
     pub fn next(self: *Executor, ctx: *context_mod.Context) AppError!void {
         if (self.global_index < self.global_middlewares.len) {

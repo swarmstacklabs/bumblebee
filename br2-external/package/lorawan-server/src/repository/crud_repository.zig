@@ -155,11 +155,7 @@ test "CRUDRepository forwards operations to implementation" {
     FakeRepository.last_delete_id = null;
 
     var mutex = std.Thread.Mutex{};
-    const db = Database{
-        .allocator = testing.allocator,
-        .conn = undefined,
-        .mutex = &mutex,
-    };
+    const db = Database.init(testing.allocator, undefined, &mutex);
 
     const CrudRepository = Interface(Record, WriteInput, i64);
     const repo = CrudRepository.bind(FakeRepository, db);
@@ -238,11 +234,7 @@ test "CRUDRepository propagates implementation errors" {
     };
 
     var mutex = std.Thread.Mutex{};
-    const db = Database{
-        .allocator = testing.allocator,
-        .conn = undefined,
-        .mutex = &mutex,
-    };
+    const db = Database.init(testing.allocator, undefined, &mutex);
 
     const CrudRepository = Interface(Record, WriteInput, i64);
     const repo = CrudRepository.bind(FakeRepository, db);

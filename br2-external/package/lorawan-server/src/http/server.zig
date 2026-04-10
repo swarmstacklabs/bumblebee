@@ -24,30 +24,27 @@ const App = app_mod.App;
 const Config = app_mod.Config;
 
 const global_middlewares = [_]runtime.Middleware{
-    .{ .name = "recover", .func = recover_middleware.middleware },
-    .{ .name = "logger", .func = logger_middleware.middleware },
-    .{ .name = "request_id", .func = request_id_middleware.middleware },
-    .{ .name = "cors", .func = cors_middleware.middleware },
+    runtime.Middleware.init("recover", recover_middleware.middleware),
+    runtime.Middleware.init("logger", logger_middleware.middleware),
+    runtime.Middleware.init("request_id", request_id_middleware.middleware),
+    runtime.Middleware.init("cors", cors_middleware.middleware),
 };
 
 const api_middlewares = [_]runtime.Middleware{
-    .{ .name = "auth", .func = auth_middleware.middleware },
+    runtime.Middleware.init("auth", auth_middleware.middleware),
 };
 
 const routes = [_]router_mod.Route{
-    .{ .method = .GET, .path = "/", .handler = home_handler.handle },
-    .{ .method = .GET, .path = "/healthz", .handler = health_handler.handle },
-    .{ .method = .GET, .path = "/api/devices", .handler = devices_handler.list, .middlewares = &api_middlewares },
-    .{ .method = .POST, .path = "/api/devices", .handler = devices_handler.create, .middlewares = &api_middlewares },
-    .{ .method = .GET, .path = "/api/devices/:id", .handler = devices_handler.get, .middlewares = &api_middlewares },
-    .{ .method = .PUT, .path = "/api/devices/:id", .handler = devices_handler.update, .middlewares = &api_middlewares },
-    .{ .method = .DELETE, .path = "/api/devices/:id", .handler = devices_handler.delete, .middlewares = &api_middlewares },
+    router_mod.Route.init(.GET, "/", home_handler.handle, &.{}),
+    router_mod.Route.init(.GET, "/healthz", health_handler.handle, &.{}),
+    router_mod.Route.init(.GET, "/api/devices", devices_handler.list, &api_middlewares),
+    router_mod.Route.init(.POST, "/api/devices", devices_handler.create, &api_middlewares),
+    router_mod.Route.init(.GET, "/api/devices/:id", devices_handler.get, &api_middlewares),
+    router_mod.Route.init(.PUT, "/api/devices/:id", devices_handler.update, &api_middlewares),
+    router_mod.Route.init(.DELETE, "/api/devices/:id", devices_handler.delete, &api_middlewares),
 };
 
-const dispatcher = pipeline.Dispatcher{
-    .middlewares = &global_middlewares,
-    .router = .{ .routes = &routes },
-};
+const dispatcher = pipeline.Dispatcher.init(&global_middlewares, router_mod.Router.init(&routes));
 
 pub const Connection = http_transport.Connection;
 
