@@ -13,6 +13,7 @@ const services_mod = @import("services.zig");
 const home_handler = @import("handlers/home.zig");
 const health_handler = @import("handlers/health.zig");
 const devices_handler = @import("handlers/devices.zig");
+const system_resources_handler = @import("handlers/system_resources.zig");
 
 const recover_middleware = @import("middleware/recover.zig");
 const logger_middleware = @import("middleware/logger.zig");
@@ -42,6 +43,7 @@ const routes = [_]router_mod.Route{
     router_mod.Route.init(.GET, "/api/devices/:id", devices_handler.get, &api_middlewares),
     router_mod.Route.init(.PUT, "/api/devices/:id", devices_handler.update, &api_middlewares),
     router_mod.Route.init(.DELETE, "/api/devices/:id", devices_handler.delete, &api_middlewares),
+    router_mod.Route.init(.GET, "/api/system/resources", system_resources_handler.get, &api_middlewares),
 };
 
 const dispatcher = pipeline.Dispatcher.init(&global_middlewares, router_mod.Router.init(&routes));
