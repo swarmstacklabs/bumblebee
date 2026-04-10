@@ -1,5 +1,6 @@
 test {
     _ = @import("conventions.zig");
+    _ = @import("http/handlers/crud_handler.zig");
     _ = @import("http/response.zig");
     _ = @import("http/http.zig");
     _ = @import("lorawan.zig");
