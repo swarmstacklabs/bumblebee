@@ -233,10 +233,15 @@ lorawan-host-build:
 lorawan-host-run:
 	@mkdir -p "$(OUTPUT_BASE)/lorawan-host"
 	@cd "$(CURDIR)/br2-external/package/lorawan-server/src" && \
-		LORAWAN_SERVER_DB_PATH="$(OUTPUT_BASE)/lorawan-host/lorawan-server.db" \
-		ZIG_LOCAL_CACHE_DIR="$$PWD/.zig-local-cache" \
-		ZIG_GLOBAL_CACHE_DIR="$$PWD/.zig-global-cache" \
-		zig build run -Doptimize=Debug
+		printf '==> DB: %s\n==> Frontend: %s\n' \
+			"$(OUTPUT_BASE)/lorawan-host/lorawan-server.db" \
+			"$(OUTPUT_BASE)/lorawan-host/frontend" && \
+		env \
+			LORAWAN_SERVER_DB_PATH="$(OUTPUT_BASE)/lorawan-host/lorawan-server.db" \
+			LORAWAN_SERVER_FRONTEND_PATH="$(OUTPUT_BASE)/lorawan-host/frontend" \
+			ZIG_LOCAL_CACHE_DIR="$$PWD/.zig-local-cache" \
+			ZIG_GLOBAL_CACHE_DIR="$$PWD/.zig-global-cache" \
+			zig build run -Doptimize=Debug
 
 %:
 	@:

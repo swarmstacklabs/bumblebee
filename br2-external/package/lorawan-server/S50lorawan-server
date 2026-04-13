@@ -2,11 +2,21 @@
 
 DAEMON=/usr/bin/lorawan-server
 PIDFILE=/var/run/lorawan-server.pid
+ENV_FILE=/etc/default/lorawan-server
+
+load_env() {
+    if [ -r "$ENV_FILE" ]; then
+        set -a
+        . "$ENV_FILE"
+        set +a
+    fi
+}
 
 start() {
     echo "Starting lorawan-server"
     mkdir -p /var/run
     mkdir -p /var/lib/lorawan-server
+    load_env
     start-stop-daemon -S -b -m -p "$PIDFILE" -x "$DAEMON" --
 }
 

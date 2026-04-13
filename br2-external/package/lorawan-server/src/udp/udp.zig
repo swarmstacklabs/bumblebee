@@ -585,7 +585,7 @@ const TestHarness = struct {
         var app = try App.init(allocator, db_path);
         errdefer app.deinit();
 
-        var cfg = try Config.initWithDefaultFrontendRoot(
+        var cfg = try Config.initWithDefaultFrontendPath(
             allocator,
             "0.0.0.0",
             0,

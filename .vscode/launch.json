@@ -12,6 +12,10 @@
         {
           "name": "LORAWAN_SERVER_DB_PATH",
           "value": "${workspaceFolder}/output/lorawan-host/lorawan-server.db"
+        },
+        {
+          "name": "LORAWAN_SERVER_FRONTEND_PATH",
+          "value": "${workspaceFolder}/output/lorawan-host/frontend"
         }
       ],
       "MIMode": "gdb",

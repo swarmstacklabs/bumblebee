@@ -10,9 +10,9 @@ pub fn handle(ctx: *context_mod.Context) !void {
         return;
     }
 
-    var lookup_result = frontend_assets.lookup(ctx.allocator, ctx.services.frontend_root, ctx.req.path) catch |err| switch (err) {
+    var lookup_result = frontend_assets.lookup(ctx.allocator, ctx.services.frontend_path, ctx.req.path) catch |err| switch (err) {
         error.FileNotFound, error.NotDir, error.AccessDenied => {
-            try serveInvalidFrontendRoot(ctx, ctx.services.frontend_root, err);
+            try serveInvalidFrontendPath(ctx, ctx.services.frontend_path, err);
             return;
         },
         else => return err,
@@ -38,17 +38,17 @@ fn serveAsset(ctx: *context_mod.Context, path: []const u8, content_type: []const
 fn serveMissingIndex(ctx: *context_mod.Context, index_path: []const u8) !void {
     const body = try std.fmt.allocPrint(
         ctx.allocator,
-        "UI build missing ({s}). Set {s} to the Vue dist directory.\n",
-        .{ index_path, "LORAWAN_SERVER_FRONTEND_ROOT" },
+        "Frontend build missing ({s}). Set {s} to the Vue dist directory.\n",
+        .{ index_path, "LORAWAN_SERVER_FRONTEND_PATH" },
     );
     ctx.res.setOwnedBody(.service_unavailable, "text/plain; charset=utf-8", body);
 }
 
-fn serveInvalidFrontendRoot(ctx: *context_mod.Context, frontend_root: []const u8, err: anyerror) !void {
+fn serveInvalidFrontendPath(ctx: *context_mod.Context, frontend_path: []const u8, err: anyerror) !void {
     const body = try std.fmt.allocPrint(
         ctx.allocator,
-        "Invalid frontend root ({s}): {s}. Set {s} to the Vue dist directory.\n",
-        .{ frontend_root, @errorName(err), "LORAWAN_SERVER_FRONTEND_ROOT" },
+        "Invalid frontend path ({s}): {s}. Set {s} to the Vue dist directory.\n",
+        .{ frontend_path, @errorName(err), "LORAWAN_SERVER_FRONTEND_PATH" },
     );
     ctx.res.setOwnedBody(.service_unavailable, "text/plain; charset=utf-8", body);
 }
