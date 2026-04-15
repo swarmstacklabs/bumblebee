@@ -975,6 +975,139 @@ test "confirmed uplink triggers empty ack downlink" {
     }
 }
 
+test "confirmed downlink is tracked, retried, and cleared by uplink ack" {
+    const allocator = std.testing.allocator;
+    var harness = try TestHarness.init(allocator);
+    defer harness.deinit();
+    var server = harness.server();
+
+    const fixture = ForwarderFixture{};
+    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
+    try seedNode(
+        harness.app.database(),
+        [_]u8{ 0x01, 0x02, 0x03, 0x04 },
+        [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F },
+        [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F },
+    );
+
+    try harness.sendFromClient(&fixture.pullData(0x0001));
+    try drainReady(&server);
+    const pull_ack = try harness.recvOnClient();
+    defer allocator.free(pull_ack);
+
+    const nwk_s_key = [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F };
+    const app_s_key = [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F };
+    const confirmed_downlink_phy = try lorawan.codec.encodeDataDownlink(
+        allocator,
+        [_]u8{ 0x01, 0x02, 0x03, 0x04 },
+        nwk_s_key,
+        app_s_key,
+        1,
+        .{ .confirmed = true, .port = 3, .data = "abc", .pending = false },
+        &[_]u8{},
+        false,
+        false,
+    );
+    defer allocator.free(confirmed_downlink_phy);
+
+    const token = try sendDownlink(&harness.app, harness.socket, fixture.gateway_mac, .{
+        .gateway_mac = fixture.gateway_mac,
+        .dev_addr = "01020304",
+        .gateway_tmst = 7,
+        .rfch = 0,
+        .freq = 868.1,
+        .powe = 14,
+        .datr = .{ .lora = "SF9BW125" },
+        .codr = "4/5",
+        .timing = .{ .class_a_delay_s = 1 },
+        .phy_payload = confirmed_downlink_phy,
+    });
+
+    const initial_pull_resp = try harness.recvOnClient();
+    defer allocator.free(initial_pull_resp);
+    try std.testing.expectEqual(@as(u8, packets.pull_resp_ident), initial_pull_resp[3]);
+
+    const tx_ack = try fixture.txAck(allocator, token, "NONE");
+    defer allocator.free(tx_ack);
+    try harness.sendFromClient(tx_ack);
+    try drainReady(&server);
+
+    {
+        const repo = state_repository.Repository.init(harness.app.database());
+        const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
+        defer node.deinit(allocator);
+        try std.testing.expect(node.pending_confirmed_downlink != null);
+        try std.testing.expectEqualSlices(u8, confirmed_downlink_phy, node.pending_confirmed_downlink.?);
+        try std.testing.expectEqual(@as(u8, 2), node.confirmed_downlink_retries);
+    }
+
+    const retry_uplink_phy = try encodeDataUplink(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 }, nwk_s_key, 1, &[_]u8{});
+    defer allocator.free(retry_uplink_phy);
+    const retry_uplink_b64 = try encodeBase64Alloc(allocator, retry_uplink_phy);
+    defer allocator.free(retry_uplink_b64);
+    const retry_rxpk_json = try fixture.rxpkPayloadJson(allocator, retry_uplink_b64, 201);
+    defer allocator.free(retry_rxpk_json);
+    const retry_push_data = try fixture.pushDataWithJson(allocator, 0x7777, retry_rxpk_json);
+    defer allocator.free(retry_push_data);
+
+    try harness.sendFromClient(retry_push_data);
+    try drainReady(&server);
+
+    const retry_push_ack = try harness.recvOnClient();
+    defer allocator.free(retry_push_ack);
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        packets.semtech_version,
+        0x77,
+        0x77,
+        packets.push_ack_ident,
+    }, retry_push_ack);
+
+    const retry_pull_resp = try harness.recvOnClient();
+    defer allocator.free(retry_pull_resp);
+    const retried_phy = try extractPullRespPhyPayload(allocator, retry_pull_resp[4..]);
+    defer allocator.free(retried_phy);
+    try std.testing.expectEqualSlices(u8, confirmed_downlink_phy, retried_phy);
+
+    {
+        const repo = state_repository.Repository.init(harness.app.database());
+        const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
+        defer node.deinit(allocator);
+        try std.testing.expect(node.pending_confirmed_downlink != null);
+        try std.testing.expectEqual(@as(u8, 1), node.confirmed_downlink_retries);
+    }
+
+    const ack_uplink_phy = try encodeAckingDataUplink(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 }, nwk_s_key, 2, &[_]u8{});
+    defer allocator.free(ack_uplink_phy);
+    const ack_uplink_b64 = try encodeBase64Alloc(allocator, ack_uplink_phy);
+    defer allocator.free(ack_uplink_b64);
+    const ack_rxpk_json = try fixture.rxpkPayloadJson(allocator, ack_uplink_b64, 202);
+    defer allocator.free(ack_rxpk_json);
+    const ack_push_data = try fixture.pushDataWithJson(allocator, 0x7878, ack_rxpk_json);
+    defer allocator.free(ack_push_data);
+
+    try harness.sendFromClient(ack_push_data);
+    try drainReady(&server);
+
+    const ack_push_ack = try harness.recvOnClient();
+    defer allocator.free(ack_push_ack);
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        packets.semtech_version,
+        0x78,
+        0x78,
+        packets.push_ack_ident,
+    }, ack_push_ack);
+    try std.testing.expectError(error.Timeout, harness.recvOnClient());
+
+    {
+        const repo = state_repository.Repository.init(harness.app.database());
+        const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
+        defer node.deinit(allocator);
+        try std.testing.expect(node.pending_confirmed_downlink == null);
+        try std.testing.expectEqual(@as(u8, 0), node.confirmed_downlink_retries);
+        try std.testing.expectEqual(@as(?u32, 2), node.f_cnt_up);
+    }
+}
+
 const ForwarderFixture = struct {
     gateway_mac: [8]u8 = .{ 1, 2, 3, 4, 5, 6, 7, 8 },
     freq: f64 = 868.10,
@@ -1241,14 +1374,18 @@ fn extractPullRespPhyPayload(allocator: std.mem.Allocator, json_payload: []const
 }
 
 fn encodeConfirmedDataUplink(allocator: std.mem.Allocator, dev_addr: [4]u8, nwk_s_key: [16]u8, f_cnt_up: u32, f_opts: []const u8) ![]u8 {
-    return encodeDataUplinkMhdr(allocator, 0b10000000, dev_addr, nwk_s_key, f_cnt_up, f_opts);
+    return encodeDataUplinkWithFlags(allocator, 0b10000000, dev_addr, nwk_s_key, f_cnt_up, f_opts, false);
+}
+
+fn encodeAckingDataUplink(allocator: std.mem.Allocator, dev_addr: [4]u8, nwk_s_key: [16]u8, f_cnt_up: u32, f_opts: []const u8) ![]u8 {
+    return encodeDataUplinkWithFlags(allocator, 0b01000000, dev_addr, nwk_s_key, f_cnt_up, f_opts, true);
 }
 
 fn encodeDataUplink(allocator: std.mem.Allocator, dev_addr: [4]u8, nwk_s_key: [16]u8, f_cnt_up: u32, f_opts: []const u8) ![]u8 {
-    return encodeDataUplinkMhdr(allocator, 0b01000000, dev_addr, nwk_s_key, f_cnt_up, f_opts);
+    return encodeDataUplinkWithFlags(allocator, 0b01000000, dev_addr, nwk_s_key, f_cnt_up, f_opts, false);
 }
 
-fn encodeDataUplinkMhdr(allocator: std.mem.Allocator, mhdr: u8, dev_addr: [4]u8, nwk_s_key: [16]u8, f_cnt_up: u32, f_opts: []const u8) ![]u8 {
+fn encodeDataUplinkWithFlags(allocator: std.mem.Allocator, mhdr: u8, dev_addr: [4]u8, nwk_s_key: [16]u8, f_cnt_up: u32, f_opts: []const u8, ack: bool) ![]u8 {
     var buffer = std.ArrayList(u8){};
     defer buffer.deinit(allocator);
 
@@ -1256,7 +1393,7 @@ fn encodeDataUplinkMhdr(allocator: std.mem.Allocator, mhdr: u8, dev_addr: [4]u8,
 
     const dev_addr_le = [_]u8{ dev_addr[3], dev_addr[2], dev_addr[1], dev_addr[0] };
     try buffer.appendSlice(allocator, &dev_addr_le);
-    try buffer.append(allocator, @intCast(f_opts.len));
+    try buffer.append(allocator, (@as(u8, if (ack) 1 else 0) << 5) | @as(u8, @intCast(f_opts.len)));
 
     var fcnt_buf: [2]u8 = undefined;
     std.mem.writeInt(u16, &fcnt_buf, @intCast(f_cnt_up & 0xFFFF), .little);

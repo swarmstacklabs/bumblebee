@@ -123,6 +123,8 @@ pub const Node = struct {
     last_dev_status_margin: ?i8,
     last_battery: ?u8,
     pending_mac_commands: ?[]u8,
+    pending_confirmed_downlink: ?[]u8,
+    confirmed_downlink_retries: u8,
 
     pub fn init(dev_addr: [4]u8, app_s_key: [16]u8, nwk_s_key: [16]u8, rxwin_use: RxWindowConfig, adr_use: AdrConfig) Node {
         return .{
@@ -139,11 +141,14 @@ pub const Node = struct {
             .last_dev_status_margin = null,
             .last_battery = null,
             .pending_mac_commands = null,
+            .pending_confirmed_downlink = null,
+            .confirmed_downlink_retries = 0,
         };
     }
 
     pub fn deinit(self: Node, allocator: std.mem.Allocator) void {
         if (self.pending_mac_commands) |value| allocator.free(value);
+        if (self.pending_confirmed_downlink) |value| allocator.free(value);
     }
 };
 

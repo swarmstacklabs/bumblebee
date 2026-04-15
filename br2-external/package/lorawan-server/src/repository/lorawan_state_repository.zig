@@ -147,6 +147,8 @@ pub const Repository = struct {
         node.last_battery = jsonOptionalU8(object, "last_battery");
         node.last_dev_status_margin = jsonOptionalI8(object, "last_margin");
         node.pending_mac_commands = if (jsonOptionalString(object, "pending_mac_commands")) |value| try parseHexSlice(allocator, value) else null;
+        node.pending_confirmed_downlink = if (jsonOptionalString(object, "pending_confirmed_downlink")) |value| try parseHexSlice(allocator, value) else null;
+        node.confirmed_downlink_retries = jsonOptionalU8(object, "confirmed_downlink_retries") orelse 0;
         return node;
     }
 
@@ -190,6 +192,8 @@ fn encodeNodeJson(allocator: std.mem.Allocator, node: types.Node) ![]u8 {
     defer if (dev_eui) |value| allocator.free(value);
     const pending_mac_commands = if (node.pending_mac_commands) |value| try hexString(allocator, value) else null;
     defer if (pending_mac_commands) |value| allocator.free(value);
+    const pending_confirmed_downlink = if (node.pending_confirmed_downlink) |value| try hexString(allocator, value) else null;
+    defer if (pending_confirmed_downlink) |value| allocator.free(value);
 
     return std.json.Stringify.valueAlloc(allocator, .{
         .appskey = app_s_key,
@@ -207,6 +211,8 @@ fn encodeNodeJson(allocator: std.mem.Allocator, node: types.Node) ![]u8 {
         .last_battery = node.last_battery,
         .last_margin = node.last_dev_status_margin,
         .pending_mac_commands = pending_mac_commands,
+        .pending_confirmed_downlink = pending_confirmed_downlink,
+        .confirmed_downlink_retries = node.confirmed_downlink_retries,
     }, .{});
 }
 

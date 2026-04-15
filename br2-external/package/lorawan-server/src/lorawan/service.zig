@@ -10,6 +10,7 @@ const types = @import("types.zig");
 const Database = app_mod.Database;
 const Rxpk = packets.Rxpk;
 const Command = commands.Command;
+const confirmed_downlink_max_retries: u8 = 2;
 
 pub const IngestResult = struct {
     event_type: []const u8,
@@ -74,14 +75,24 @@ pub const Service = struct {
             else => return,
         };
 
-        if (frame.f_opts.len == 0) return;
-
         var node = (try self.state_repo.findNodeByDevAddr(allocator, frame.dev_addr)) orelse return;
         defer node.deinit(allocator);
 
-        const combined = try appendPendingMacCommands(allocator, node.pending_mac_commands, frame.f_opts);
-        if (node.pending_mac_commands) |value| allocator.free(value);
-        node.pending_mac_commands = combined;
+        if (frame.confirmed) {
+            if (node.pending_confirmed_downlink) |pending_phy| {
+                if (std.mem.eql(u8, pending_phy, phy_payload)) return;
+            }
+        }
+
+        if (frame.f_opts.len > 0) {
+            const combined = try appendPendingMacCommands(allocator, node.pending_mac_commands, frame.f_opts);
+            if (node.pending_mac_commands) |value| allocator.free(value);
+            node.pending_mac_commands = combined;
+        }
+
+        if (frame.confirmed) {
+            try replacePendingConfirmedDownlink(allocator, &node, phy_payload, confirmed_downlink_max_retries);
+        }
 
         try self.state_repo.upsertNode(allocator, node);
     }
@@ -170,6 +181,7 @@ pub const Service = struct {
         defer parsed.deinit(allocator);
 
         node.f_cnt_up = parsed.f_cnt;
+        if (parsed.ack) clearPendingConfirmedDownlink(allocator, &node);
 
         var downlink: ?packets.DownlinkRequest = null;
         const response_commands = try codec.buildMacResponses(allocator, parsed, rxTimeMs(rxpk), 1);
@@ -195,6 +207,25 @@ pub const Service = struct {
                 .timing = .{ .class_a_delay_s = network.rx1_delay_s },
                 .phy_payload = phy,
             };
+        } else if (node.pending_confirmed_downlink) |pending_phy| {
+            if (node.confirmed_downlink_retries > 0) {
+                const dev_addr_hex = try state_repository.hexString(allocator, &node.dev_addr);
+                node.confirmed_downlink_retries -= 1;
+                downlink = .{
+                    .gateway_mac = gateway_mac,
+                    .dev_addr = dev_addr_hex,
+                    .gateway_tmst = rxpk.tmst,
+                    .rfch = gateway.tx_rfch,
+                    .freq = rxpk.freq,
+                    .powe = network.gw_power,
+                    .datr = cloneDataRate(allocator, rxpk.datr),
+                    .codr = try allocator.dupe(u8, network.tx_codr),
+                    .timing = .{ .class_a_delay_s = network.rx1_delay_s },
+                    .phy_payload = try allocator.dupe(u8, pending_phy),
+                };
+            } else {
+                clearPendingConfirmedDownlink(allocator, &node);
+            }
         }
 
         if (codec.collectMacCommands(allocator, parsed)) |status_commands| {
@@ -277,6 +308,20 @@ fn appendPendingMacCommands(allocator: std.mem.Allocator, existing: ?[]const u8,
     if (existing) |value| @memcpy(out[0..value.len], value);
     @memcpy(out[existing_len..], new);
     return out;
+}
+
+fn replacePendingConfirmedDownlink(allocator: std.mem.Allocator, node: *types.Node, phy_payload: []const u8, retries: u8) !void {
+    if (node.pending_confirmed_downlink) |value| allocator.free(value);
+    node.pending_confirmed_downlink = try allocator.dupe(u8, phy_payload);
+    node.confirmed_downlink_retries = retries;
+}
+
+fn clearPendingConfirmedDownlink(allocator: std.mem.Allocator, node: *types.Node) void {
+    if (node.pending_confirmed_downlink) |value| {
+        allocator.free(value);
+        node.pending_confirmed_downlink = null;
+    }
+    node.confirmed_downlink_retries = 0;
 }
 
 fn containsDevNonce(used_dev_nonces: []const u16, dev_nonce: u16) bool {
