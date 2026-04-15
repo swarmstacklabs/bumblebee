@@ -21,11 +21,19 @@ pub const RxWindowConfig = struct {
 pub const AdrConfig = struct {
     tx_power: i32,
     data_rate: u8,
+    max_dcycle: ?u8 = null,
+    uplink_dwell_time: ?bool = null,
+    downlink_dwell_time: ?bool = null,
+    max_eirp: ?u8 = null,
 
     pub fn init(tx_power: i32, data_rate: u8) AdrConfig {
         return .{
             .tx_power = tx_power,
             .data_rate = data_rate,
+            .max_dcycle = null,
+            .uplink_dwell_time = null,
+            .downlink_dwell_time = null,
+            .max_eirp = null,
         };
     }
 
@@ -165,6 +173,7 @@ pub const Node = struct {
     f_cnt_up: ?u32,
     f_cnt_down: u32,
     rxwin_use: RxWindowConfig,
+    rx1_delay_s: ?u8,
     adr_use: AdrConfig,
     channel_masks: ?[]ChannelMaskState,
     enabled_channels: ?[]u8,
@@ -187,6 +196,7 @@ pub const Node = struct {
             .f_cnt_up = null,
             .f_cnt_down = 0,
             .rxwin_use = rxwin_use,
+            .rx1_delay_s = null,
             .adr_use = adr_use,
             .channel_masks = null,
             .enabled_channels = null,

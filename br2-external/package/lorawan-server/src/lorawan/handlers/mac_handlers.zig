@@ -110,12 +110,38 @@ fn handleAckOnly(ctx: *context_mod.Context) !void {
                 else => {},
             }
         },
+        .duty_cycle_ans => {
+            switch (pending) {
+                .duty_cycle_req => |request| {
+                    node.adr_use.max_dcycle = request.max_dcycle;
+                },
+                else => {},
+            }
+        },
         .rx_param_setup_ans => |answer| {
             switch (pending) {
                 .rx_param_setup_req => |request| if (answer.rx1_dr_offset_ack and answer.rx2_data_rate_ack and answer.channel_ack) {
                     node.rxwin_use.rx1_dr_offset = request.rx1_dr_offset;
                     node.rxwin_use.rx2_data_rate = request.rx2_data_rate;
                     node.rxwin_use.frequency = @as(f64, @floatFromInt(request.frequency_100hz)) / 10_000.0;
+                },
+                else => {},
+            }
+        },
+        .rx_timing_setup_ans => {
+            switch (pending) {
+                .rx_timing_setup_req => |request| {
+                    node.rx1_delay_s = if (request.delay == 0) 1 else request.delay;
+                },
+                else => {},
+            }
+        },
+        .tx_param_setup_ans => {
+            switch (pending) {
+                .tx_param_setup_req => |request| {
+                    node.adr_use.downlink_dwell_time = request.downlink_dwell;
+                    node.adr_use.uplink_dwell_time = request.uplink_dwell;
+                    node.adr_use.max_eirp = request.max_eirp;
                 },
                 else => {},
             }
@@ -379,10 +405,16 @@ test "mac command handlers update node state" {
 
     const remaining = try applyToNode(std.testing.allocator, &node, &[_]commands.Command{
         .{ .link_adr_req = .{ .data_rate = 5, .tx_power = 7, .channel_mask = 0x00FF, .ch_mask_cntl = 0, .nb_rep = 1 } },
+        .{ .duty_cycle_req = .{ .max_dcycle = 9 } },
         .{ .rx_param_setup_req = .{ .rx1_dr_offset = 3, .rx2_data_rate = 4, .frequency_100hz = 8695250 } },
+        .{ .rx_timing_setup_req = .{ .delay = 0 } },
+        .{ .tx_param_setup_req = .{ .downlink_dwell = true, .uplink_dwell = false, .max_eirp = 11 } },
     }, &[_]commands.Command{
         .{ .link_adr_ans = .{ .power_ack = true, .data_rate_ack = true, .channel_mask_ack = true } },
+        .duty_cycle_ans,
         .{ .rx_param_setup_ans = .{ .rx1_dr_offset_ack = true, .rx2_data_rate_ack = true, .channel_ack = true } },
+        .rx_timing_setup_ans,
+        .tx_param_setup_ans,
         .{ .dev_status_ans = .{ .battery = 99, .margin = -2 } },
         .device_time_req,
     });
@@ -392,10 +424,15 @@ test "mac command handlers update node state" {
     try std.testing.expectEqual(@as(?i8, -2), node.last_dev_status_margin);
     try std.testing.expectEqual(@as(i32, 7), node.adr_use.tx_power);
     try std.testing.expectEqual(@as(u8, 5), node.adr_use.data_rate);
+    try std.testing.expectEqual(@as(?u8, 9), node.adr_use.max_dcycle);
+    try std.testing.expectEqual(@as(?bool, true), node.adr_use.downlink_dwell_time);
+    try std.testing.expectEqual(@as(?bool, false), node.adr_use.uplink_dwell_time);
+    try std.testing.expectEqual(@as(?u8, 11), node.adr_use.max_eirp);
     try std.testing.expectEqual(@as(usize, 1), node.channel_masks.?.len);
     try std.testing.expectEqual(@as(u8, 0), node.channel_masks.?[0].control);
     try std.testing.expectEqual(@as(u16, 0x00FF), node.channel_masks.?[0].mask);
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7 }, node.enabled_channels.?);
+    try std.testing.expectEqual(@as(?u8, 1), node.rx1_delay_s);
     try std.testing.expectEqual(@as(u8, 3), node.rxwin_use.rx1_dr_offset);
     try std.testing.expectEqual(@as(u8, 4), node.rxwin_use.rx2_data_rate);
     try std.testing.expectEqual(@as(f64, 869.525), node.rxwin_use.frequency);

@@ -1231,7 +1231,6 @@ const ForwarderFixture = struct {
     codr: []const u8 = "4/5",
 
     fn rxpkPayloadJson(self: ForwarderFixture, allocator: std.mem.Allocator, base64_data: []const u8, tmst: u64) ![]u8 {
-        _ = self;
         return std.json.Stringify.valueAlloc(allocator, .{
             .rxpk = &[_]struct {
                 modu: []const u8,
@@ -1242,9 +1241,9 @@ const ForwarderFixture = struct {
                 tmst: u64,
             }{.{
                 .modu = "LORA",
-                .freq = 868.10,
-                .datr = "SF12BW125",
-                .codr = "4/5",
+                .freq = self.freq,
+                .datr = self.datr,
+                .codr = self.codr,
                 .data = base64_data,
                 .tmst = tmst,
             }},

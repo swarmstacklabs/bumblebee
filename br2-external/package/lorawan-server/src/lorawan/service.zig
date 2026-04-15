@@ -194,6 +194,7 @@ pub const Service = struct {
                 try allocator.alloc(u8, 0);
             defer allocator.free(f_opts);
             const phy = try codec.encodeUnicast(allocator, &node, .{}, f_opts, parsed.confirmed, parsed.adr);
+            defer allocator.free(phy);
             downlink = try buildNodeDownlinkRequest(allocator, gateway_mac, gateway, network, rxpk, node, phy);
         } else if (node.pending_confirmed_downlink) |pending_phy| {
             if (node.confirmed_downlink_retries > 0) {
@@ -290,7 +291,7 @@ fn buildNodeDownlinkRequest(allocator: std.mem.Allocator, gateway_mac: [8]u8, ga
     const dev_addr_hex = try state_repository.hexString(allocator, &node.dev_addr);
     errdefer allocator.free(dev_addr_hex);
 
-    const rx_window = try selectClassADownlinkWindow(allocator, network, rxpk, node.rxwin_use);
+    const rx_window = try selectClassADownlinkWindowWithDelay(allocator, network, rxpk, node.rxwin_use, node.rx1_delay_s);
 
     return .{
         .gateway_mac = gateway_mac,
@@ -313,18 +314,23 @@ const SelectedClassAWindow = struct {
 };
 
 fn selectClassADownlinkWindow(allocator: std.mem.Allocator, network: types.Network, rxpk: Rxpk, rxwin_use: types.RxWindowConfig) !SelectedClassAWindow {
+    return selectClassADownlinkWindowWithDelay(allocator, network, rxpk, rxwin_use, null);
+}
+
+fn selectClassADownlinkWindowWithDelay(allocator: std.mem.Allocator, network: types.Network, rxpk: Rxpk, rxwin_use: types.RxWindowConfig, rx1_delay_override: ?u8) !SelectedClassAWindow {
+    const rx1_delay_s = @as(u32, rx1_delay_override orelse @as(u8, @intCast(network.rx1_delay_s)));
     if (try rx1DataRate(allocator, rxpk.datr, rxwin_use.rx1_dr_offset)) |datr| {
         return .{
             .freq = rxpk.freq,
             .datr = datr,
-            .delay_s = network.rx1_delay_s,
+            .delay_s = rx1_delay_s,
         };
     }
 
     return .{
         .freq = rxwin_use.frequency,
         .datr = try rx2DataRate(allocator, rxwin_use.rx2_data_rate),
-        .delay_s = network.rx1_delay_s + 1,
+        .delay_s = rx1_delay_s + 1,
     };
 }
 
@@ -427,4 +433,74 @@ fn decodePendingPhyPayload(allocator: std.mem.Allocator, pending_json: []const u
     errdefer allocator.free(out);
     try decoder.decode(out, data.string);
     return out;
+}
+
+test "class A window respects node rx1 delay override" {
+    const network = types.Network.init(
+        try std.testing.allocator.dupe(u8, "public"),
+        .{ 0x00, 0x00, 0x13 },
+        try std.testing.allocator.dupe(u8, "4/5"),
+        5,
+        1,
+        14,
+        .{},
+    );
+    defer network.deinit(std.testing.allocator);
+
+    const rxpk = packets.Rxpk{
+        .tmst = 1,
+        .freq = 868.1,
+        .datr = .{ .lora = try std.testing.allocator.dupe(u8, "SF7BW125") },
+        .codr = try std.testing.allocator.dupe(u8, "4/5"),
+        .data = try std.testing.allocator.alloc(u8, 0),
+        .time = null,
+        .tmms = null,
+        .rssi = null,
+        .lsnr = null,
+    };
+    defer rxpk.deinit(std.testing.allocator);
+
+    const selected = try selectClassADownlinkWindowWithDelay(std.testing.allocator, network, rxpk, .{}, 3);
+    defer switch (selected.datr) {
+        .lora => |value| std.testing.allocator.free(value),
+        .fsk => {},
+    };
+
+    try std.testing.expectEqual(@as(u32, 3), selected.delay_s);
+    try std.testing.expectEqual(@as(f64, 868.1), selected.freq);
+}
+
+test "class A rx2 fallback uses overridden rx1 delay plus one second" {
+    const network = types.Network.init(
+        try std.testing.allocator.dupe(u8, "public"),
+        .{ 0x00, 0x00, 0x13 },
+        try std.testing.allocator.dupe(u8, "4/5"),
+        5,
+        1,
+        14,
+        .{},
+    );
+    defer network.deinit(std.testing.allocator);
+
+    const rxpk = packets.Rxpk{
+        .tmst = 1,
+        .freq = 868.1,
+        .datr = .{ .fsk = 50000 },
+        .codr = try std.testing.allocator.dupe(u8, "4/5"),
+        .data = try std.testing.allocator.alloc(u8, 0),
+        .time = null,
+        .tmms = null,
+        .rssi = null,
+        .lsnr = null,
+    };
+    defer rxpk.deinit(std.testing.allocator);
+
+    const selected = try selectClassADownlinkWindowWithDelay(std.testing.allocator, network, rxpk, .{ .rx2_data_rate = 2, .frequency = 869.525 }, 4);
+    defer switch (selected.datr) {
+        .lora => |value| std.testing.allocator.free(value),
+        .fsk => {},
+    };
+
+    try std.testing.expectEqual(@as(u32, 5), selected.delay_s);
+    try std.testing.expectEqual(@as(f64, 869.525), selected.freq);
 }

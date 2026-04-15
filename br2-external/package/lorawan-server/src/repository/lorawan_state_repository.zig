@@ -134,16 +134,21 @@ pub const Repository = struct {
             try parseHexArray(16, try jsonRequiredString(object, "appskey")),
             try parseHexArray(16, try jsonRequiredString(object, "nwkskey")),
             parseRxWindow(object.get("rxwin_use")),
-            types.AdrConfig.init(
-                jsonOptionalI32(object, "adr_tx_power") orelse 14,
-                jsonOptionalU8(object, "adr_data_rate") orelse 0,
-            ),
+            .{
+                .tx_power = jsonOptionalI32(object, "adr_tx_power") orelse 14,
+                .data_rate = jsonOptionalU8(object, "adr_data_rate") orelse 0,
+                .max_dcycle = jsonOptionalU8(object, "max_dcycle"),
+                .uplink_dwell_time = jsonOptionalBool(object, "uplink_dwell_time"),
+                .downlink_dwell_time = jsonOptionalBool(object, "downlink_dwell_time"),
+                .max_eirp = jsonOptionalU8(object, "max_eirp"),
+            },
         );
         node.id = stmt.readInt64(0);
         node.device_id = if (stmt.columnType(1) == storage.c.SQLITE_NULL) null else stmt.readInt64(1);
         node.dev_eui = if (jsonOptionalString(object, "dev_eui")) |value| try parseHexArray(8, value) else null;
         node.f_cnt_up = jsonOptionalU32(object, "fcntup");
         node.f_cnt_down = jsonOptionalU32(object, "fcntdown") orelse 0;
+        node.rx1_delay_s = jsonOptionalU8(object, "rx1_delay");
         node.channel_masks = try parseChannelMasks(allocator, object.get("channel_masks"));
         node.enabled_channels = try parseEnabledChannels(allocator, object.get("enabled_channels"));
         node.extra_channels = try parseExtraChannels(allocator, object.get("extra_channels"));
@@ -210,8 +215,13 @@ fn encodeNodeJson(allocator: std.mem.Allocator, node: types.Node) ![]u8 {
             .rx2_data_rate = node.rxwin_use.rx2_data_rate,
             .frequency = node.rxwin_use.frequency,
         },
+        .rx1_delay = node.rx1_delay_s,
         .adr_tx_power = node.adr_use.tx_power,
         .adr_data_rate = node.adr_use.data_rate,
+        .max_dcycle = node.adr_use.max_dcycle,
+        .uplink_dwell_time = node.adr_use.uplink_dwell_time,
+        .downlink_dwell_time = node.adr_use.downlink_dwell_time,
+        .max_eirp = node.adr_use.max_eirp,
         .channel_masks = node.channel_masks,
         .enabled_channels = node.enabled_channels,
         .extra_channels = node.extra_channels,
@@ -261,7 +271,8 @@ fn parseChannelMasks(allocator: std.mem.Allocator, value: ?std.json.Value) !?[]t
         ));
     }
 
-    return out.toOwnedSlice(allocator);
+    if (out.items.len == 0) return null;
+    return try out.toOwnedSlice(allocator);
 }
 
 fn parseEnabledChannels(allocator: std.mem.Allocator, value: ?std.json.Value) !?[]u8 {
@@ -278,7 +289,8 @@ fn parseEnabledChannels(allocator: std.mem.Allocator, value: ?std.json.Value) !?
         }
     }
 
-    return out.toOwnedSlice(allocator);
+    if (out.items.len == 0) return null;
+    return try out.toOwnedSlice(allocator);
 }
 
 fn parseExtraChannels(allocator: std.mem.Allocator, value: ?std.json.Value) !?[]types.ExtraChannel {
@@ -298,7 +310,8 @@ fn parseExtraChannels(allocator: std.mem.Allocator, value: ?std.json.Value) !?[]
         ));
     }
 
-    return out.toOwnedSlice(allocator);
+    if (out.items.len == 0) return null;
+    return try out.toOwnedSlice(allocator);
 }
 
 fn parseDlChannelMap(allocator: std.mem.Allocator, value: ?std.json.Value) !?[]types.DlChannelMapping {
@@ -316,7 +329,8 @@ fn parseDlChannelMap(allocator: std.mem.Allocator, value: ?std.json.Value) !?[]t
         ));
     }
 
-    return out.toOwnedSlice(allocator);
+    if (out.items.len == 0) return null;
+    return try out.toOwnedSlice(allocator);
 }
 
 fn jsonRequiredString(object: std.json.ObjectMap, key: []const u8) ![]const u8 {
@@ -398,6 +412,14 @@ fn jsonOptionalF64(object: std.json.ObjectMap, key: []const u8) ?f64 {
     return switch (value) {
         .float => |num| num,
         .integer => |num| @floatFromInt(num),
+        else => null,
+    };
+}
+
+fn jsonOptionalBool(object: std.json.ObjectMap, key: []const u8) ?bool {
+    const value = object.get(key) orelse return null;
+    return switch (value) {
+        .bool => |flag| flag,
         else => null,
     };
 }

@@ -47,7 +47,8 @@ pub fn decodeJoinRequest(payload: []const u8) !types.JoinRequest {
 fn decodeDataFrame(payload: []const u8, is_uplink: bool) !types.DataFrame {
     if (payload.len < 12) return error.PacketTooShort;
 
-    const confirm = ((payload[0] >> 5) & 0b001) == 1;
+    const mtype = payload[0] >> 5;
+    const confirm = mtype == 0b100 or mtype == 0b101;
 
     var dev_addr_le: [4]u8 = undefined;
     @memcpy(&dev_addr_le, payload[1..5]);
