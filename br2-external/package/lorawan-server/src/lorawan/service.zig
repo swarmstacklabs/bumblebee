@@ -175,10 +175,13 @@ pub const Service = struct {
         const response_commands = try codec.buildMacResponses(allocator, parsed, rxTimeMs(rxpk), 1);
         defer allocator.free(response_commands);
 
-        if (response_commands.len > 0) {
-            const f_opts = try commands.encodeFOpts(allocator, response_commands);
+        if (response_commands.len > 0 or parsed.confirmed) {
+            const f_opts = if (response_commands.len > 0)
+                try commands.encodeFOpts(allocator, response_commands)
+            else
+                try allocator.alloc(u8, 0);
             defer allocator.free(f_opts);
-            const phy = try codec.encodeUnicast(allocator, &node, .{}, f_opts, false, parsed.adr);
+            const phy = try codec.encodeUnicast(allocator, &node, .{}, f_opts, parsed.confirmed, parsed.adr);
             const dev_addr_hex = try state_repository.hexString(allocator, &node.dev_addr);
             downlink = .{
                 .gateway_mac = gateway_mac,
