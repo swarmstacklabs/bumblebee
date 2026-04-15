@@ -649,6 +649,89 @@ test "tx ack persists pending mac commands and later uplink syncs node state" {
     }
 }
 
+test "tx ack persists oversized pending mac commands encoded on port zero" {
+    const allocator = std.testing.allocator;
+    var harness = try TestHarness.init(allocator);
+    defer harness.deinit();
+    var server = harness.server();
+
+    const fixture = ForwarderFixture{};
+    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
+    try seedNode(
+        harness.app.database(),
+        [_]u8{ 0x01, 0x02, 0x03, 0x04 },
+        [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F },
+        [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F },
+    );
+
+    try harness.sendFromClient(&fixture.pullData(0x0001));
+    try drainReady(&server);
+    const pull_ack = try harness.recvOnClient();
+    defer allocator.free(pull_ack);
+
+    const request_fopts = try lorawan.commands.encodeFOpts(allocator, &[_]lorawan.commands.Command{
+        .{ .link_adr_req = .{ .data_rate = 5, .tx_power = 7, .channel_mask = 0x00FF, .ch_mask_cntl = 0, .nb_rep = 1 } },
+        .{ .link_adr_req = .{ .data_rate = 5, .tx_power = 6, .channel_mask = 0x0F0F, .ch_mask_cntl = 0, .nb_rep = 1 } },
+        .{ .link_adr_req = .{ .data_rate = 4, .tx_power = 5, .channel_mask = 0xF0F0, .ch_mask_cntl = 0, .nb_rep = 1 } },
+        .{ .link_adr_req = .{ .data_rate = 3, .tx_power = 4, .channel_mask = 0xAAAA, .ch_mask_cntl = 0, .nb_rep = 1 } },
+    });
+    defer allocator.free(request_fopts);
+    try std.testing.expect(request_fopts.len > 15);
+
+    const nwk_s_key = [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F };
+    const app_s_key = [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F };
+    const downlink_phy = try lorawan.codec.encodeDataDownlink(
+        allocator,
+        [_]u8{ 0x01, 0x02, 0x03, 0x04 },
+        nwk_s_key,
+        app_s_key,
+        1,
+        .{ .confirmed = false, .port = null, .data = "", .pending = false },
+        request_fopts,
+        false,
+        false,
+    );
+    defer allocator.free(downlink_phy);
+
+    const decoded = try lorawan.codec.decodeFrame(downlink_phy);
+    const frame = switch (decoded) {
+        .data => |value| value,
+        else => return error.UnexpectedFrameType,
+    };
+    try std.testing.expectEqual(@as(usize, 0), frame.f_opts.len);
+    try std.testing.expectEqual(@as(?u8, 0), frame.f_port);
+
+    const token = try sendDownlink(&harness.app, harness.socket, fixture.gateway_mac, .{
+        .gateway_mac = fixture.gateway_mac,
+        .dev_addr = "01020304",
+        .gateway_tmst = 7,
+        .rfch = 0,
+        .freq = 868.1,
+        .powe = 14,
+        .datr = .{ .lora = "SF9BW125" },
+        .codr = "4/5",
+        .timing = .{ .class_a_delay_s = 1 },
+        .phy_payload = downlink_phy,
+    });
+
+    const pull_resp = try harness.recvOnClient();
+    defer allocator.free(pull_resp);
+    try std.testing.expectEqual(@as(u8, packets.pull_resp_ident), pull_resp[3]);
+
+    const tx_ack = try fixture.txAck(allocator, token, "NONE");
+    defer allocator.free(tx_ack);
+    try harness.sendFromClient(tx_ack);
+    try drainReady(&server);
+
+    {
+        const repo = state_repository.Repository.init(harness.app.database());
+        const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
+        defer node.deinit(allocator);
+        try std.testing.expect(node.pending_mac_commands != null);
+        try std.testing.expectEqualSlices(u8, request_fopts, node.pending_mac_commands.?);
+    }
+}
+
 test "reused OTAA dev nonce is rejected after first successful join" {
     const allocator = std.testing.allocator;
     var harness = try TestHarness.init(allocator);

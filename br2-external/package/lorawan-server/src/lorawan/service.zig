@@ -90,6 +90,14 @@ pub const Service = struct {
             node.pending_mac_commands = combined;
         }
 
+        if (frame.f_port == 0 and frame.frm_payload.len > 0) {
+            const parsed = try codec.decodeDataPayload(allocator, frame, node);
+            defer parsed.deinit(allocator);
+            const combined = try appendPendingMacCommands(allocator, node.pending_mac_commands, parsed.decoded_payload);
+            if (node.pending_mac_commands) |value| allocator.free(value);
+            node.pending_mac_commands = combined;
+        }
+
         if (frame.confirmed) {
             try replacePendingConfirmedDownlink(allocator, &node, phy_payload, confirmed_downlink_max_retries);
         }

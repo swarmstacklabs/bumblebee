@@ -194,7 +194,15 @@ pub fn encodeUnicast(allocator: std.mem.Allocator, node: *types.Node, tx_data: t
 }
 
 pub fn encodeDataDownlink(allocator: std.mem.Allocator, dev_addr: [4]u8, nwk_s_key: [16]u8, app_s_key: [16]u8, f_cnt_down: u32, tx_data: types.TxData, f_opts: []const u8, ack: bool, adr: bool) ![]u8 {
-    if (f_opts.len > 15) return error.FOptsTooLarge;
+    if (f_opts.len > 15) {
+        if (tx_data.port != null or tx_data.data.len > 0) return error.FOptsTooLarge;
+        return encodeDataDownlink(allocator, dev_addr, nwk_s_key, app_s_key, f_cnt_down, .{
+            .confirmed = tx_data.confirmed,
+            .port = 0,
+            .data = f_opts,
+            .pending = tx_data.pending,
+        }, &[_]u8{}, ack, adr);
+    }
 
     const payload_key = if (tx_data.port != null and tx_data.port.? == 0) nwk_s_key else app_s_key;
     const encrypted_payload = try cipherPayload(allocator, tx_data.data, payload_key, false, dev_addr, f_cnt_down);
@@ -402,6 +410,60 @@ test "collectMacCommands includes FOpts and port-zero payload commands" {
     try std.testing.expect(incoming[0] == .link_check_req);
     try std.testing.expect(incoming[1] == .dev_status_ans);
     try std.testing.expectEqual(@as(u8, 0x64), incoming[1].dev_status_ans.battery);
+}
+
+test "encodeDataDownlink moves oversized MAC commands into port-zero payload" {
+    const allocator = std.testing.allocator;
+    const dev_addr = [_]u8{ 0x01, 0x02, 0x03, 0x04 };
+    const app_s_key = [_]u8{
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F,
+    };
+    const nwk_s_key = [_]u8{
+        0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27,
+        0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F,
+    };
+    const f_opts = try commands.encodeFOpts(allocator, &[_]commands.Command{
+        .{ .link_adr_req = .{ .data_rate = 5, .tx_power = 7, .channel_mask = 0x00FF, .ch_mask_cntl = 0, .nb_rep = 1 } },
+        .{ .link_adr_req = .{ .data_rate = 5, .tx_power = 6, .channel_mask = 0x0F0F, .ch_mask_cntl = 0, .nb_rep = 1 } },
+        .{ .link_adr_req = .{ .data_rate = 4, .tx_power = 5, .channel_mask = 0xF0F0, .ch_mask_cntl = 0, .nb_rep = 1 } },
+        .{ .link_adr_req = .{ .data_rate = 3, .tx_power = 4, .channel_mask = 0xAAAA, .ch_mask_cntl = 0, .nb_rep = 1 } },
+    });
+    defer allocator.free(f_opts);
+
+    try std.testing.expect(f_opts.len > 15);
+
+    const phy = try encodeDataDownlink(
+        allocator,
+        dev_addr,
+        nwk_s_key,
+        app_s_key,
+        1,
+        .{},
+        f_opts,
+        false,
+        false,
+    );
+    defer allocator.free(phy);
+
+    const decoded = try decodeFrame(phy);
+    const frame = switch (decoded) {
+        .data => |value| value,
+        else => return error.UnexpectedFrameType,
+    };
+
+    try std.testing.expectEqual(@as(usize, 0), frame.f_opts.len);
+    try std.testing.expectEqual(@as(?u8, 0), frame.f_port);
+
+    const node = types.Node.init(dev_addr, app_s_key, nwk_s_key, types.RxWindowConfig.init(0, 0, 869.525), types.AdrConfig.init(14, 0));
+    const parsed = try decodeDataPayload(allocator, frame, node);
+    defer parsed.deinit(allocator);
+
+    try std.testing.expectEqualSlices(u8, f_opts, parsed.decoded_payload);
+    const outgoing = try commands.parseDownlinkFOpts(allocator, parsed.decoded_payload);
+    defer allocator.free(outgoing);
+    try std.testing.expectEqual(@as(usize, 4), outgoing.len);
+    try std.testing.expect(outgoing[0] == .link_adr_req);
 }
 
 test "data payload cipher round trip" {
