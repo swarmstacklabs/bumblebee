@@ -733,6 +733,103 @@ test "reused OTAA dev nonce is rejected after first successful join" {
     }
 }
 
+test "successful OTAA rejoins persist and increment app nonce state" {
+    const allocator = std.testing.allocator;
+    var harness = try TestHarness.init(allocator);
+    defer harness.deinit();
+    var server = harness.server();
+
+    const fixture = ForwarderFixture{};
+    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
+    try seedDevice(harness.app.database(), "node-a", "1112131415161718", "0102030405060708", "2b7e151628aed2a6abf7158809cf4f3c", "public", "26011bda");
+
+    try harness.sendFromClient(&fixture.pullData(0x0001));
+    try drainReady(&server);
+    const pull_ack = try harness.recvOnClient();
+    defer allocator.free(pull_ack);
+
+    const first_join_payload = try encodeJoinRequest(
+        allocator,
+        [_]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 },
+        [_]u8{ 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18 },
+        [_]u8{ 0xAA, 0xBB },
+        [_]u8{ 0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6, 0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C },
+    );
+    defer allocator.free(first_join_payload);
+    const first_join_b64 = try encodeBase64Alloc(allocator, first_join_payload);
+    defer allocator.free(first_join_b64);
+    const first_rxpk_json = try fixture.rxpkPayloadJson(allocator, first_join_b64, 42);
+    defer allocator.free(first_rxpk_json);
+    const first_push_data = try fixture.pushDataWithJson(allocator, 0x2400, first_rxpk_json);
+    defer allocator.free(first_push_data);
+
+    try harness.sendFromClient(first_push_data);
+    try drainReady(&server);
+
+    const first_push_ack = try harness.recvOnClient();
+    defer allocator.free(first_push_ack);
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        packets.semtech_version,
+        0x24,
+        0x00,
+        packets.push_ack_ident,
+    }, first_push_ack);
+
+    const first_pull_resp = try harness.recvOnClient();
+    defer allocator.free(first_pull_resp);
+    try std.testing.expectEqual(@as(u8, packets.pull_resp_ident), first_pull_resp[3]);
+
+    {
+        const repo = state_repository.Repository.init(harness.app.database());
+        const device = (try repo.findDeviceByDevEui(allocator, [_]u8{ 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18 })).?;
+        defer device.deinit(allocator);
+        try std.testing.expectEqual(@as(u32, 1), device.next_app_nonce);
+        try std.testing.expectEqual(@as(usize, 1), device.used_dev_nonces.len);
+        try std.testing.expectEqual(@as(u16, 0xBBAA), device.used_dev_nonces[0]);
+    }
+
+    const second_join_payload = try encodeJoinRequest(
+        allocator,
+        [_]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 },
+        [_]u8{ 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18 },
+        [_]u8{ 0xCC, 0xDD },
+        [_]u8{ 0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6, 0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C },
+    );
+    defer allocator.free(second_join_payload);
+    const second_join_b64 = try encodeBase64Alloc(allocator, second_join_payload);
+    defer allocator.free(second_join_b64);
+    const second_rxpk_json = try fixture.rxpkPayloadJson(allocator, second_join_b64, 43);
+    defer allocator.free(second_rxpk_json);
+    const second_push_data = try fixture.pushDataWithJson(allocator, 0x2500, second_rxpk_json);
+    defer allocator.free(second_push_data);
+
+    try harness.sendFromClient(second_push_data);
+    try drainReady(&server);
+
+    const second_push_ack = try harness.recvOnClient();
+    defer allocator.free(second_push_ack);
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        packets.semtech_version,
+        0x25,
+        0x00,
+        packets.push_ack_ident,
+    }, second_push_ack);
+
+    const second_pull_resp = try harness.recvOnClient();
+    defer allocator.free(second_pull_resp);
+    try std.testing.expectEqual(@as(u8, packets.pull_resp_ident), second_pull_resp[3]);
+
+    {
+        const repo = state_repository.Repository.init(harness.app.database());
+        const device = (try repo.findDeviceByDevEui(allocator, [_]u8{ 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18 })).?;
+        defer device.deinit(allocator);
+        try std.testing.expectEqual(@as(u32, 2), device.next_app_nonce);
+        try std.testing.expectEqual(@as(usize, 2), device.used_dev_nonces.len);
+        try std.testing.expectEqual(@as(u16, 0xBBAA), device.used_dev_nonces[0]);
+        try std.testing.expectEqual(@as(u16, 0xDDCC), device.used_dev_nonces[1]);
+    }
+}
+
 test "duplicate uplink frame counter is rejected without mutating node state" {
     const allocator = std.testing.allocator;
     var harness = try TestHarness.init(allocator);

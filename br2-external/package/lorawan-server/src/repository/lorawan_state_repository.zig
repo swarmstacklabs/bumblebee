@@ -89,6 +89,7 @@ pub const Repository = struct {
             if (jsonOptionalString(object, "network_name")) |value| try allocator.dupe(u8, value) else null,
             if (jsonOptionalString(object, "dev_addr")) |value| try parseHexArray(4, value) else null,
             try parseUsedDevNonces(allocator, object),
+            try parseNextAppNonce(object),
         );
     }
 
@@ -217,6 +218,7 @@ fn encodeDeviceJson(allocator: std.mem.Allocator, device: types.Device) ![]u8 {
         .network_name = device.network_name,
         .dev_addr = dev_addr,
         .used_dev_nonces = device.used_dev_nonces,
+        .next_app_nonce = device.next_app_nonce,
     }, .{});
 }
 
@@ -264,6 +266,12 @@ fn parseUsedDevNonces(allocator: std.mem.Allocator, object: std.json.ObjectMap) 
     }
 
     return out;
+}
+
+fn parseNextAppNonce(object: std.json.ObjectMap) !u32 {
+    const value = jsonOptionalU32(object, "next_app_nonce") orelse return 0;
+    if (value > 0x00FF_FFFF) return error.InvalidJsonField;
+    return value;
 }
 
 fn jsonOptionalU8(object: std.json.ObjectMap, key: []const u8) ?u8 {

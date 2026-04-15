@@ -41,8 +41,9 @@ pub const Device = struct {
     network_name: ?[]u8,
     dev_addr_hint: ?[4]u8,
     used_dev_nonces: []u16,
+    next_app_nonce: u32,
 
-    pub fn init(id: i64, name: []u8, dev_eui: [8]u8, app_eui: [8]u8, app_key: [16]u8, network_name: ?[]u8, dev_addr_hint: ?[4]u8, used_dev_nonces: []u16) Device {
+    pub fn init(id: i64, name: []u8, dev_eui: [8]u8, app_eui: [8]u8, app_key: [16]u8, network_name: ?[]u8, dev_addr_hint: ?[4]u8, used_dev_nonces: []u16, next_app_nonce: u32) Device {
         return .{
             .id = id,
             .name = name,
@@ -52,6 +53,7 @@ pub const Device = struct {
             .network_name = network_name,
             .dev_addr_hint = dev_addr_hint,
             .used_dev_nonces = used_dev_nonces,
+            .next_app_nonce = next_app_nonce,
         };
     }
 

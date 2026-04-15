@@ -95,8 +95,7 @@ pub const Service = struct {
         const dev_nonce = std.mem.readInt(u16, &join.dev_nonce, .little);
         if (containsDevNonce(device.used_dev_nonces, dev_nonce)) return null;
 
-        var app_nonce: [3]u8 = undefined;
-        std.crypto.random.bytes(&app_nonce);
+        const app_nonce = allocateAppNonce(&device) orelse return null;
         const session = codec.deriveSessionKeys(device.app_key, app_nonce, network.net_id, join.dev_nonce);
 
         const dev_addr = device.dev_addr_hint orelse try randomDevAddr(network.net_id);
@@ -289,6 +288,18 @@ fn appendDevNonce(allocator: std.mem.Allocator, used_dev_nonces: []const u16, de
     @memcpy(out[0..used_dev_nonces.len], used_dev_nonces);
     out[used_dev_nonces.len] = dev_nonce;
     return out;
+}
+
+fn allocateAppNonce(device: *types.Device) ?[3]u8 {
+    if (device.next_app_nonce > 0x00FF_FFFF) return null;
+
+    const app_nonce = [3]u8{
+        @intCast(device.next_app_nonce & 0xFF),
+        @intCast((device.next_app_nonce >> 8) & 0xFF),
+        @intCast((device.next_app_nonce >> 16) & 0xFF),
+    };
+    device.next_app_nonce += 1;
+    return app_nonce;
 }
 
 fn decodePendingPhyPayload(allocator: std.mem.Allocator, pending_json: []const u8) ![]u8 {
