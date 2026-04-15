@@ -32,6 +32,52 @@ pub const AdrConfig = struct {
     pub fn deinit(_: AdrConfig) void {}
 };
 
+pub const ChannelMaskState = struct {
+    control: u8,
+    mask: u16,
+
+    pub fn init(control: u8, mask: u16) ChannelMaskState {
+        return .{
+            .control = control,
+            .mask = mask,
+        };
+    }
+
+    pub fn deinit(_: ChannelMaskState) void {}
+};
+
+pub const ExtraChannel = struct {
+    index: u8,
+    frequency: f64,
+    min_data_rate: u8,
+    max_data_rate: u8,
+
+    pub fn init(index: u8, frequency: f64, min_data_rate: u8, max_data_rate: u8) ExtraChannel {
+        return .{
+            .index = index,
+            .frequency = frequency,
+            .min_data_rate = min_data_rate,
+            .max_data_rate = max_data_rate,
+        };
+    }
+
+    pub fn deinit(_: ExtraChannel) void {}
+};
+
+pub const DlChannelMapping = struct {
+    index: u8,
+    frequency: f64,
+
+    pub fn init(index: u8, frequency: f64) DlChannelMapping {
+        return .{
+            .index = index,
+            .frequency = frequency,
+        };
+    }
+
+    pub fn deinit(_: DlChannelMapping) void {}
+};
+
 pub const Device = struct {
     id: i64,
     name: []u8,
@@ -120,6 +166,10 @@ pub const Node = struct {
     f_cnt_down: u32,
     rxwin_use: RxWindowConfig,
     adr_use: AdrConfig,
+    channel_masks: ?[]ChannelMaskState,
+    enabled_channels: ?[]u8,
+    extra_channels: ?[]ExtraChannel,
+    dl_channel_map: ?[]DlChannelMapping,
     last_dev_status_margin: ?i8,
     last_battery: ?u8,
     pending_mac_commands: ?[]u8,
@@ -138,6 +188,10 @@ pub const Node = struct {
             .f_cnt_down = 0,
             .rxwin_use = rxwin_use,
             .adr_use = adr_use,
+            .channel_masks = null,
+            .enabled_channels = null,
+            .extra_channels = null,
+            .dl_channel_map = null,
             .last_dev_status_margin = null,
             .last_battery = null,
             .pending_mac_commands = null,
@@ -147,6 +201,10 @@ pub const Node = struct {
     }
 
     pub fn deinit(self: Node, allocator: std.mem.Allocator) void {
+        if (self.channel_masks) |value| allocator.free(value);
+        if (self.enabled_channels) |value| allocator.free(value);
+        if (self.extra_channels) |value| allocator.free(value);
+        if (self.dl_channel_map) |value| allocator.free(value);
         if (self.pending_mac_commands) |value| allocator.free(value);
         if (self.pending_confirmed_downlink) |value| allocator.free(value);
     }

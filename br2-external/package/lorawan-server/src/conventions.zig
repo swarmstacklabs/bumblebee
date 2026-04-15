@@ -72,6 +72,9 @@ test "checked structs declare init and deinit" {
 
         expectInitDeinit(types.RxWindowConfig, "types.RxWindowConfig");
         expectInitDeinit(types.AdrConfig, "types.AdrConfig");
+        expectInitDeinit(types.ChannelMaskState, "types.ChannelMaskState");
+        expectInitDeinit(types.ExtraChannel, "types.ExtraChannel");
+        expectInitDeinit(types.DlChannelMapping, "types.DlChannelMapping");
         expectInitDeinit(types.Device, "types.Device");
         expectInitDeinit(types.Network, "types.Network");
         expectInitDeinit(types.Gateway, "types.Gateway");

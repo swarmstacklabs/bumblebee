@@ -144,6 +144,10 @@ pub const Repository = struct {
         node.dev_eui = if (jsonOptionalString(object, "dev_eui")) |value| try parseHexArray(8, value) else null;
         node.f_cnt_up = jsonOptionalU32(object, "fcntup");
         node.f_cnt_down = jsonOptionalU32(object, "fcntdown") orelse 0;
+        node.channel_masks = try parseChannelMasks(allocator, object.get("channel_masks"));
+        node.enabled_channels = try parseEnabledChannels(allocator, object.get("enabled_channels"));
+        node.extra_channels = try parseExtraChannels(allocator, object.get("extra_channels"));
+        node.dl_channel_map = try parseDlChannelMap(allocator, object.get("dl_channel_map"));
         node.last_battery = jsonOptionalU8(object, "last_battery");
         node.last_dev_status_margin = jsonOptionalI8(object, "last_margin");
         node.pending_mac_commands = if (jsonOptionalString(object, "pending_mac_commands")) |value| try parseHexSlice(allocator, value) else null;
@@ -208,6 +212,10 @@ fn encodeNodeJson(allocator: std.mem.Allocator, node: types.Node) ![]u8 {
         },
         .adr_tx_power = node.adr_use.tx_power,
         .adr_data_rate = node.adr_use.data_rate,
+        .channel_masks = node.channel_masks,
+        .enabled_channels = node.enabled_channels,
+        .extra_channels = node.extra_channels,
+        .dl_channel_map = node.dl_channel_map,
         .last_battery = node.last_battery,
         .last_margin = node.last_dev_status_margin,
         .pending_mac_commands = pending_mac_commands,
@@ -238,6 +246,79 @@ fn parseRxWindow(value: ?std.json.Value) types.RxWindowConfig {
     );
 }
 
+fn parseChannelMasks(allocator: std.mem.Allocator, value: ?std.json.Value) !?[]types.ChannelMaskState {
+    const root = value orelse return null;
+    if (root != .array) return null;
+
+    var out = std.ArrayListUnmanaged(types.ChannelMaskState){};
+    defer out.deinit(allocator);
+
+    for (root.array.items) |item| {
+        if (item != .object) continue;
+        try out.append(allocator, types.ChannelMaskState.init(
+            jsonOptionalU8(item.object, "control") orelse continue,
+            jsonOptionalU16(item.object, "mask") orelse continue,
+        ));
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+fn parseEnabledChannels(allocator: std.mem.Allocator, value: ?std.json.Value) !?[]u8 {
+    const root = value orelse return null;
+    if (root != .array) return null;
+
+    var out = std.ArrayListUnmanaged(u8){};
+    defer out.deinit(allocator);
+
+    for (root.array.items) |item| {
+        switch (item) {
+            .integer => |num| try out.append(allocator, @intCast(num)),
+            else => {},
+        }
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+fn parseExtraChannels(allocator: std.mem.Allocator, value: ?std.json.Value) !?[]types.ExtraChannel {
+    const root = value orelse return null;
+    if (root != .array) return null;
+
+    var out = std.ArrayListUnmanaged(types.ExtraChannel){};
+    defer out.deinit(allocator);
+
+    for (root.array.items) |item| {
+        if (item != .object) continue;
+        try out.append(allocator, types.ExtraChannel.init(
+            jsonOptionalU8(item.object, "index") orelse continue,
+            jsonOptionalF64(item.object, "frequency") orelse continue,
+            jsonOptionalU8(item.object, "min_data_rate") orelse continue,
+            jsonOptionalU8(item.object, "max_data_rate") orelse continue,
+        ));
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
+fn parseDlChannelMap(allocator: std.mem.Allocator, value: ?std.json.Value) !?[]types.DlChannelMapping {
+    const root = value orelse return null;
+    if (root != .array) return null;
+
+    var out = std.ArrayListUnmanaged(types.DlChannelMapping){};
+    defer out.deinit(allocator);
+
+    for (root.array.items) |item| {
+        if (item != .object) continue;
+        try out.append(allocator, types.DlChannelMapping.init(
+            jsonOptionalU8(item.object, "index") orelse continue,
+            jsonOptionalF64(item.object, "frequency") orelse continue,
+        ));
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
 fn jsonRequiredString(object: std.json.ObjectMap, key: []const u8) ![]const u8 {
     const value = object.get(key) orelse return error.MissingJsonField;
     if (value != .string) return error.InvalidJsonField;
@@ -250,6 +331,14 @@ fn jsonOptionalString(object: std.json.ObjectMap, key: []const u8) ?[]const u8 {
 }
 
 fn jsonOptionalU32(object: std.json.ObjectMap, key: []const u8) ?u32 {
+    const value = object.get(key) orelse return null;
+    return switch (value) {
+        .integer => |num| @intCast(num),
+        else => null,
+    };
+}
+
+fn jsonOptionalU16(object: std.json.ObjectMap, key: []const u8) ?u16 {
     const value = object.get(key) orelse return null;
     return switch (value) {
         .integer => |num| @intCast(num),
