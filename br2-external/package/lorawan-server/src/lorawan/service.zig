@@ -4,6 +4,7 @@ const app_mod = @import("../app.zig");
 const packets = @import("packets.zig");
 const codec = @import("codec.zig");
 const commands = @import("commands.zig");
+const mac_handlers = @import("handlers/mac_handlers.zig");
 const state_repository = @import("../repository/lorawan_state_repository.zig");
 const types = @import("types.zig");
 const Database = app_mod.Database;
@@ -150,18 +151,10 @@ pub const Service = struct {
             };
         }
 
-        if (parsed.f_port == 0 and parsed.decoded_payload.len > 0) {
-            const status_commands = commands.parseFOpts(allocator, parsed.decoded_payload) catch &[_]commands.Command{};
-            if (@TypeOf(status_commands) != []commands.Command) {} else {
-                defer allocator.free(status_commands);
-                for (status_commands) |command| {
-                    if (command == .dev_status_ans) {
-                        node.last_battery = command.dev_status_ans.battery;
-                        node.last_dev_status_margin = command.dev_status_ans.margin;
-                    }
-                }
-            }
-        }
+        if (codec.collectMacCommands(allocator, parsed)) |status_commands| {
+            defer allocator.free(status_commands);
+            try mac_handlers.applyToNode(allocator, &node, status_commands);
+        } else |_| {}
 
         try self.state_repo.upsertNode(allocator, node);
 

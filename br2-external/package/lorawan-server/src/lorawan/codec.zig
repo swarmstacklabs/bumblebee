@@ -1,5 +1,6 @@
 const std = @import("std");
 const commands = @import("commands.zig");
+const mac_handlers = @import("handlers/mac_handlers.zig");
 const types = @import("types.zig");
 
 const Aes128 = std.crypto.core.aes.Aes128;
@@ -268,26 +269,26 @@ pub fn cipherPayload(allocator: std.mem.Allocator, payload: []const u8, key: [16
 }
 
 pub fn buildMacResponses(allocator: std.mem.Allocator, parsed: types.ParsedDataFrame, rx_time_ms: i64, gateway_count: usize) ![]commands.Command {
-    var out = std.ArrayList(commands.Command){};
-    errdefer out.deinit(allocator);
-
-    const incoming = try commands.parseFOpts(allocator, parsed.f_opts);
+    const incoming = try collectMacCommands(allocator, parsed);
     defer allocator.free(incoming);
+    return mac_handlers.buildResponses(allocator, incoming, rx_time_ms, gateway_count);
+}
 
-    for (incoming) |command| {
-        switch (command) {
-            .link_check_req => try out.append(allocator, .{ .link_check_ans = .{
-                .margin = 0,
-                .gateway_count = @intCast(@min(gateway_count, std.math.maxInt(u8))),
-            } }),
-            .device_time_req => try out.append(allocator, .{ .device_time_ans = .{
-                .milliseconds_since_epoch = rx_time_ms,
-            } }),
-            else => {},
-        }
+pub fn collectMacCommands(allocator: std.mem.Allocator, parsed: types.ParsedDataFrame) ![]commands.Command {
+    var incoming = std.ArrayList(commands.Command){};
+    errdefer incoming.deinit(allocator);
+
+    const f_opts_commands = try commands.parseFOpts(allocator, parsed.f_opts);
+    defer allocator.free(f_opts_commands);
+    try incoming.appendSlice(allocator, f_opts_commands);
+
+    if (parsed.f_port == 0 and parsed.decoded_payload.len > 0) {
+        const payload_commands = try commands.parseFOpts(allocator, parsed.decoded_payload);
+        defer allocator.free(payload_commands);
+        try incoming.appendSlice(allocator, payload_commands);
     }
 
-    return out.toOwnedSlice(allocator);
+    return incoming.toOwnedSlice(allocator);
 }
 
 pub fn fullFCnt(previous: ?u32, next16: u16) u32 {
@@ -359,6 +360,29 @@ test "join request verification and session keys" {
     };
     _ = payload;
     _ = app_key;
+}
+
+test "collectMacCommands includes FOpts and port-zero payload commands" {
+    const parsed = types.ParsedDataFrame.init(
+        false,
+        [_]u8{ 1, 2, 3, 4 },
+        false,
+        false,
+        false,
+        7,
+        0,
+        try std.testing.allocator.dupe(u8, &[_]u8{0x02}),
+        try std.testing.allocator.dupe(u8, &[_]u8{ 0x06, 0x64, 0x05 }),
+    );
+    defer parsed.deinit(std.testing.allocator);
+
+    const incoming = try collectMacCommands(std.testing.allocator, parsed);
+    defer std.testing.allocator.free(incoming);
+
+    try std.testing.expectEqual(@as(usize, 2), incoming.len);
+    try std.testing.expect(incoming[0] == .link_check_req);
+    try std.testing.expect(incoming[1] == .dev_status_ans);
+    try std.testing.expectEqual(@as(u8, 0x64), incoming[1].dev_status_ans.battery);
 }
 
 test "data payload cipher round trip" {

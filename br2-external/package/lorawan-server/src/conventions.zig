@@ -15,6 +15,10 @@ const device_repository = @import("repository/device_repository.zig");
 const gateway_repository = @import("repository/gateway_repository.zig");
 const lorawan_state_repository = @import("repository/lorawan_state_repository.zig");
 const pending_downlinks = @import("lorawan/pending_downlinks.zig");
+const lorawan_context = @import("lorawan/context.zig");
+const lorawan_dispatcher = @import("lorawan/dispatcher.zig");
+const lorawan_router = @import("lorawan/router.zig");
+const lorawan_runtime = @import("lorawan/runtime.zig");
 const types = @import("lorawan/types.zig");
 
 fn expectInitDeinit(comptime T: type, comptime name: []const u8) void {
@@ -58,6 +62,13 @@ test "checked structs declare init and deinit" {
         expectInitDeinit(pending_downlinks.Entry, "pending_downlinks.Entry");
         expectInitDeinit(pending_downlinks.Key, "pending_downlinks.Key");
         expectInitDeinit(pending_downlinks.Tracker, "pending_downlinks.Tracker");
+        expectInitDeinit(lorawan_context.Context, "lorawan_context.Context");
+        expectInitDeinit(lorawan_runtime.Middleware, "lorawan_runtime.Middleware");
+        expectInitDeinit(lorawan_runtime.Executor, "lorawan_runtime.Executor");
+        expectInitDeinit(lorawan_router.Route, "lorawan_router.Route");
+        expectInitDeinit(lorawan_router.Match, "lorawan_router.Match");
+        expectInitDeinit(lorawan_router.Router, "lorawan_router.Router");
+        expectInitDeinit(lorawan_dispatcher.Dispatcher, "lorawan_dispatcher.Dispatcher");
 
         expectInitDeinit(types.RxWindowConfig, "types.RxWindowConfig");
         expectInitDeinit(types.AdrConfig, "types.AdrConfig");
