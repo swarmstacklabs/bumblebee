@@ -290,31 +290,85 @@ fn buildNodeDownlinkRequest(allocator: std.mem.Allocator, gateway_mac: [8]u8, ga
     const dev_addr_hex = try state_repository.hexString(allocator, &node.dev_addr);
     errdefer allocator.free(dev_addr_hex);
 
+    const rx_window = try selectClassADownlinkWindow(allocator, network, rxpk, node.rxwin_use);
+
     return .{
         .gateway_mac = gateway_mac,
         .dev_addr = dev_addr_hex,
         .gateway_tmst = rxpk.tmst,
         .rfch = gateway.tx_rfch,
-        .freq = node.rxwin_use.frequency,
+        .freq = rx_window.freq,
         .powe = network.gw_power,
-        .datr = try rx2DataRate(allocator, node.rxwin_use.rx2_data_rate),
+        .datr = rx_window.datr,
         .codr = try allocator.dupe(u8, network.tx_codr),
-        .timing = .{ .class_a_delay_s = network.rx1_delay_s + 1 },
+        .timing = .{ .class_a_delay_s = rx_window.delay_s },
         .phy_payload = try allocator.dupe(u8, phy_payload),
     };
 }
 
+const SelectedClassAWindow = struct {
+    freq: f64,
+    datr: packets.DataRate,
+    delay_s: u32,
+};
+
+fn selectClassADownlinkWindow(allocator: std.mem.Allocator, network: types.Network, rxpk: Rxpk, rxwin_use: types.RxWindowConfig) !SelectedClassAWindow {
+    if (try rx1DataRate(allocator, rxpk.datr, rxwin_use.rx1_dr_offset)) |datr| {
+        return .{
+            .freq = rxpk.freq,
+            .datr = datr,
+            .delay_s = network.rx1_delay_s,
+        };
+    }
+
+    return .{
+        .freq = rxwin_use.frequency,
+        .datr = try rx2DataRate(allocator, rxwin_use.rx2_data_rate),
+        .delay_s = network.rx1_delay_s + 1,
+    };
+}
+
+fn rx1DataRate(allocator: std.mem.Allocator, uplink_datr: packets.DataRate, rx1_dr_offset: u8) !?packets.DataRate {
+    const uplink_index = switch (uplink_datr) {
+        .lora => |value| (try loraDataRateIndex(value)) orelse return null,
+        .fsk => return null,
+    };
+    const downlink_index = uplink_index -| rx1_dr_offset;
+    return try loraDataRateFromIndex(allocator, downlink_index);
+}
+
 fn rx2DataRate(allocator: std.mem.Allocator, data_rate: u8) !packets.DataRate {
-    const lora = switch (data_rate) {
+    const lora = try loraDataRateName(data_rate);
+    return .{ .lora = try allocator.dupe(u8, lora) };
+}
+
+fn loraDataRateFromIndex(allocator: std.mem.Allocator, data_rate: u8) !packets.DataRate {
+    const lora = try loraDataRateName(data_rate);
+    return .{ .lora = try allocator.dupe(u8, lora) };
+}
+
+fn loraDataRateName(data_rate: u8) ![]const u8 {
+    return switch (data_rate) {
         0 => "SF12BW125",
         1 => "SF11BW125",
         2 => "SF10BW125",
         3 => "SF9BW125",
         4 => "SF8BW125",
         5 => "SF7BW125",
+        6 => "SF7BW250",
         else => return error.UnsupportedRx2DataRate,
     };
-    return .{ .lora = try allocator.dupe(u8, lora) };
+}
+
+fn loraDataRateIndex(datr: []const u8) !?u8 {
+    if (std.mem.eql(u8, datr, "SF12BW125")) return 0;
+    if (std.mem.eql(u8, datr, "SF11BW125")) return 1;
+    if (std.mem.eql(u8, datr, "SF10BW125")) return 2;
+    if (std.mem.eql(u8, datr, "SF9BW125")) return 3;
+    if (std.mem.eql(u8, datr, "SF8BW125")) return 4;
+    if (std.mem.eql(u8, datr, "SF7BW125")) return 5;
+    if (std.mem.eql(u8, datr, "SF7BW250")) return 6;
+    return null;
 }
 
 fn replacePendingConfirmedDownlink(allocator: std.mem.Allocator, node: *types.Node, phy_payload: []const u8, retries: u8) !void {

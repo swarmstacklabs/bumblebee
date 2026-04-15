@@ -268,12 +268,6 @@ pub fn cipherPayload(allocator: std.mem.Allocator, payload: []const u8, key: [16
     return out;
 }
 
-pub fn buildMacResponses(allocator: std.mem.Allocator, parsed: types.ParsedDataFrame, rx_time_ms: i64, gateway_count: usize) ![]commands.Command {
-    const incoming = try collectMacCommands(allocator, parsed);
-    defer allocator.free(incoming);
-    return mac_handlers.buildResponses(allocator, incoming, rx_time_ms, gateway_count);
-}
-
 pub fn collectMacCommands(allocator: std.mem.Allocator, parsed: types.ParsedDataFrame) ![]commands.Command {
     var incoming = std.ArrayList(commands.Command){};
     errdefer incoming.deinit(allocator);
@@ -289,6 +283,12 @@ pub fn collectMacCommands(allocator: std.mem.Allocator, parsed: types.ParsedData
     }
 
     return incoming.toOwnedSlice(allocator);
+}
+
+pub fn buildMacResponses(allocator: std.mem.Allocator, parsed: types.ParsedDataFrame, rx_time_ms: i64, gateway_count: usize) ![]commands.Command {
+    const incoming = try collectMacCommands(allocator, parsed);
+    defer allocator.free(incoming);
+    return mac_handlers.buildResponses(allocator, incoming, rx_time_ms, gateway_count);
 }
 
 pub fn fullFCnt(previous: ?u32, next16: u16) u32 {
@@ -349,10 +349,28 @@ fn reverse4(value: [4]u8) [4]u8 {
 test "join request verification and session keys" {
     const payload = [_]u8{
         0x00,
-        0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01,
-        0x18, 0x17, 0x16, 0x15, 0x14, 0x13, 0x12, 0x11,
-        0xAA, 0xBB,
-        0x4A, 0x54, 0x90, 0xDC,
+        0x08,
+        0x07,
+        0x06,
+        0x05,
+        0x04,
+        0x03,
+        0x02,
+        0x01,
+        0x18,
+        0x17,
+        0x16,
+        0x15,
+        0x14,
+        0x13,
+        0x12,
+        0x11,
+        0xAA,
+        0xBB,
+        0x4A,
+        0x54,
+        0x90,
+        0xDC,
     };
     const app_key = [_]u8{
         0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6,
