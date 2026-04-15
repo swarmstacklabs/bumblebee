@@ -163,6 +163,24 @@ pub const Gateway = struct {
     }
 };
 
+pub const ApplicationDownlink = struct {
+    confirmed: bool,
+    port: u8,
+    payload: []u8,
+
+    pub fn init(confirmed: bool, port: u8, payload: []u8) ApplicationDownlink {
+        return .{
+            .confirmed = confirmed,
+            .port = port,
+            .payload = payload,
+        };
+    }
+
+    pub fn deinit(self: ApplicationDownlink, allocator: std.mem.Allocator) void {
+        allocator.free(self.payload);
+    }
+};
+
 pub const Node = struct {
     id: i64,
     dev_addr: [4]u8,
@@ -182,6 +200,7 @@ pub const Node = struct {
     last_dev_status_margin: ?i8,
     last_battery: ?u8,
     pending_mac_commands: ?[]u8,
+    application_downlink_queue: ?[]ApplicationDownlink,
     pending_confirmed_downlink: ?[]u8,
     confirmed_downlink_retries: u8,
 
@@ -205,6 +224,7 @@ pub const Node = struct {
             .last_dev_status_margin = null,
             .last_battery = null,
             .pending_mac_commands = null,
+            .application_downlink_queue = null,
             .pending_confirmed_downlink = null,
             .confirmed_downlink_retries = 0,
         };
@@ -216,6 +236,10 @@ pub const Node = struct {
         if (self.extra_channels) |value| allocator.free(value);
         if (self.dl_channel_map) |value| allocator.free(value);
         if (self.pending_mac_commands) |value| allocator.free(value);
+        if (self.application_downlink_queue) |value| {
+            for (value) |item| item.deinit(allocator);
+            allocator.free(value);
+        }
         if (self.pending_confirmed_downlink) |value| allocator.free(value);
     }
 };

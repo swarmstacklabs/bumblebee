@@ -96,6 +96,10 @@ pub const Service = struct {
             const combined = try appendPendingMacCommands(allocator, node.pending_mac_commands, parsed.decoded_payload);
             if (node.pending_mac_commands) |value| allocator.free(value);
             node.pending_mac_commands = combined;
+        } else if (frame.f_port) |port| {
+            const parsed = try codec.decodeDataPayload(allocator, frame, node);
+            defer parsed.deinit(allocator);
+            acknowledgeApplicationDownlink(allocator, &node, frame.confirmed, port, parsed.decoded_payload);
         }
 
         if (frame.confirmed) {
@@ -206,14 +210,19 @@ pub const Service = struct {
         defer allocator.free(network_commands);
         const outgoing_commands = try appendCommands(allocator, response_commands, network_commands);
         defer allocator.free(outgoing_commands);
+        const queued_application = nextApplicationDownlink(node.application_downlink_queue);
 
-        if (outgoing_commands.len > 0 or parsed.confirmed) {
+        if (outgoing_commands.len > 0 or parsed.confirmed or queued_application != null) {
+            const tx_data = if (queued_application != null and outgoing_commands.len <= 15)
+                queued_application.?
+            else
+                types.TxData.init(false, null, "", false);
             const f_opts = if (outgoing_commands.len > 0)
                 try commands.encodeFOpts(allocator, outgoing_commands)
             else
                 try allocator.alloc(u8, 0);
             defer allocator.free(f_opts);
-            const phy = try codec.encodeUnicast(allocator, &node, .{}, f_opts, parsed.confirmed, parsed.adr);
+            const phy = try codec.encodeUnicast(allocator, &node, tx_data, f_opts, parsed.confirmed, parsed.adr);
             defer allocator.free(phy);
             downlink = try buildNodeDownlinkRequest(allocator, gateway_mac, gateway, network, rxpk, node, phy);
         } else if (node.pending_confirmed_downlink) |pending_phy| {
@@ -309,6 +318,35 @@ fn appendCommands(allocator: std.mem.Allocator, first: []const Command, second: 
     @memcpy(out[0..first.len], first);
     @memcpy(out[first.len..], second);
     return out;
+}
+
+fn nextApplicationDownlink(queue: ?[]const types.ApplicationDownlink) ?types.TxData {
+    const items = queue orelse return null;
+    if (items.len == 0) return null;
+
+    const first = items[0];
+    return types.TxData.init(first.confirmed, first.port, first.payload, items.len > 1);
+}
+
+fn acknowledgeApplicationDownlink(allocator: std.mem.Allocator, node: *types.Node, confirmed: bool, port: u8, payload: []const u8) void {
+    const queue = node.application_downlink_queue orelse return;
+    if (queue.len == 0) return;
+
+    const first = queue[0];
+    if (first.confirmed != confirmed or first.port != port) return;
+    if (!std.mem.eql(u8, first.payload, payload)) return;
+
+    allocator.free(first.payload);
+    if (queue.len == 1) {
+        allocator.free(queue);
+        node.application_downlink_queue = null;
+        return;
+    }
+
+    const remaining = allocator.alloc(types.ApplicationDownlink, queue.len - 1) catch return;
+    for (queue[1..], 0..) |item, i| remaining[i] = item;
+    allocator.free(queue);
+    node.application_downlink_queue = remaining;
 }
 
 fn buildNodeDownlinkRequest(allocator: std.mem.Allocator, gateway_mac: [8]u8, gateway: types.Gateway, network: types.Network, rxpk: Rxpk, node: types.Node, phy_payload: []const u8) !packets.DownlinkRequest {

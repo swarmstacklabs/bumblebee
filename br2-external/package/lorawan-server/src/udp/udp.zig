@@ -1191,6 +1191,144 @@ test "confirmed downlink is tracked, retried, and cleared by uplink ack" {
     }
 }
 
+test "queued application downlinks are delivered and set fpending until drained" {
+    const allocator = std.testing.allocator;
+    var harness = try TestHarness.init(allocator);
+    defer harness.deinit();
+    var server = harness.server();
+
+    const fixture = ForwarderFixture{};
+    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
+    try seedNode(
+        harness.app.database(),
+        [_]u8{ 0x01, 0x02, 0x03, 0x04 },
+        [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F },
+        [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F },
+    );
+    try seedApplicationQueue(harness.app.database(), [_]u8{ 0x01, 0x02, 0x03, 0x04 });
+
+    try harness.sendFromClient(&fixture.pullData(0x0001));
+    try drainReady(&server);
+    const pull_ack = try harness.recvOnClient();
+    defer allocator.free(pull_ack);
+
+    const nwk_s_key = [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F };
+    const first_uplink_phy = try encodeDataUplink(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 }, nwk_s_key, 1, &[_]u8{});
+    defer allocator.free(first_uplink_phy);
+    const first_uplink_b64 = try encodeBase64Alloc(allocator, first_uplink_phy);
+    defer allocator.free(first_uplink_b64);
+    const first_rxpk_json = try fixture.rxpkPayloadJson(allocator, first_uplink_b64, 401);
+    defer allocator.free(first_rxpk_json);
+    const first_push_data = try fixture.pushDataWithJson(allocator, 0x5151, first_rxpk_json);
+    defer allocator.free(first_push_data);
+
+    try harness.sendFromClient(first_push_data);
+    try drainReady(&server);
+
+    const first_push_ack = try harness.recvOnClient();
+    defer allocator.free(first_push_ack);
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        packets.semtech_version,
+        0x51,
+        0x51,
+        packets.push_ack_ident,
+    }, first_push_ack);
+
+    const first_pull_resp = try harness.recvOnClient();
+    defer allocator.free(first_pull_resp);
+    const first_downlink_phy = try extractPullRespPhyPayload(allocator, first_pull_resp[4..]);
+    defer allocator.free(first_downlink_phy);
+    const first_decoded = try lorawan.codec.decodeFrame(first_downlink_phy);
+    const first_frame = switch (first_decoded) {
+        .data => |value| value,
+        else => return error.UnexpectedFrameType,
+    };
+    try std.testing.expect(first_frame.pending);
+    try std.testing.expectEqual(@as(?u8, 15), first_frame.f_port);
+
+    {
+        const repo = state_repository.Repository.init(harness.app.database());
+        const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
+        defer node.deinit(allocator);
+        try std.testing.expectEqual(@as(usize, 2), node.application_downlink_queue.?.len);
+
+        const first_payload = try lorawan.codec.decodeDataPayload(allocator, first_frame, node);
+        defer first_payload.deinit(allocator);
+        try std.testing.expectEqualSlices(u8, "hello", first_payload.decoded_payload);
+    }
+
+    const first_token = std.mem.readInt(u16, first_pull_resp[1..3], .big);
+    const first_tx_ack = try fixture.txAck(allocator, first_token, "NONE");
+    defer allocator.free(first_tx_ack);
+    try harness.sendFromClient(first_tx_ack);
+    try drainReady(&server);
+
+    {
+        const repo = state_repository.Repository.init(harness.app.database());
+        const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
+        defer node.deinit(allocator);
+        try std.testing.expectEqual(@as(usize, 1), node.application_downlink_queue.?.len);
+        try std.testing.expectEqual(@as(u8, 9), node.application_downlink_queue.?[0].port);
+        try std.testing.expectEqualSlices(u8, "bye", node.application_downlink_queue.?[0].payload);
+    }
+
+    const second_uplink_phy = try encodeDataUplink(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 }, nwk_s_key, 2, &[_]u8{});
+    defer allocator.free(second_uplink_phy);
+    const second_uplink_b64 = try encodeBase64Alloc(allocator, second_uplink_phy);
+    defer allocator.free(second_uplink_b64);
+    const second_rxpk_json = try fixture.rxpkPayloadJson(allocator, second_uplink_b64, 402);
+    defer allocator.free(second_rxpk_json);
+    const second_push_data = try fixture.pushDataWithJson(allocator, 0x5252, second_rxpk_json);
+    defer allocator.free(second_push_data);
+
+    try harness.sendFromClient(second_push_data);
+    try drainReady(&server);
+
+    const second_push_ack = try harness.recvOnClient();
+    defer allocator.free(second_push_ack);
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        packets.semtech_version,
+        0x52,
+        0x52,
+        packets.push_ack_ident,
+    }, second_push_ack);
+
+    const second_pull_resp = try harness.recvOnClient();
+    defer allocator.free(second_pull_resp);
+    const second_downlink_phy = try extractPullRespPhyPayload(allocator, second_pull_resp[4..]);
+    defer allocator.free(second_downlink_phy);
+    const second_decoded = try lorawan.codec.decodeFrame(second_downlink_phy);
+    const second_frame = switch (second_decoded) {
+        .data => |value| value,
+        else => return error.UnexpectedFrameType,
+    };
+    try std.testing.expect(!second_frame.pending);
+    try std.testing.expectEqual(@as(?u8, 9), second_frame.f_port);
+
+    {
+        const repo = state_repository.Repository.init(harness.app.database());
+        const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
+        defer node.deinit(allocator);
+
+        const second_payload = try lorawan.codec.decodeDataPayload(allocator, second_frame, node);
+        defer second_payload.deinit(allocator);
+        try std.testing.expectEqualSlices(u8, "bye", second_payload.decoded_payload);
+    }
+
+    const second_token = std.mem.readInt(u16, second_pull_resp[1..3], .big);
+    const second_tx_ack = try fixture.txAck(allocator, second_token, "NONE");
+    defer allocator.free(second_tx_ack);
+    try harness.sendFromClient(second_tx_ack);
+    try drainReady(&server);
+
+    {
+        const repo = state_repository.Repository.init(harness.app.database());
+        const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
+        defer node.deinit(allocator);
+        try std.testing.expect(node.application_downlink_queue == null);
+    }
+}
+
 test "node downlinks prefer RX1 scheduling when uplink state supports it" {
     const allocator = std.testing.allocator;
     var harness = try TestHarness.init(allocator);
@@ -1558,6 +1696,17 @@ fn seedDevice(db: app_mod.Database, name: []const u8, dev_eui: []const u8, app_e
 fn seedNode(db: app_mod.Database, dev_addr: [4]u8, app_s_key: [16]u8, nwk_s_key: [16]u8) !void {
     const repo = state_repository.Repository.init(db);
     const node = lorawan.types.Node.init(dev_addr, app_s_key, nwk_s_key, .{}, .{ .tx_power = 0, .data_rate = 0 });
+    try repo.upsertNode(db.allocator, node);
+}
+
+fn seedApplicationQueue(db: app_mod.Database, dev_addr: [4]u8) !void {
+    const repo = state_repository.Repository.init(db);
+    var node = (try repo.findNodeByDevAddr(db.allocator, dev_addr)).?;
+    defer node.deinit(db.allocator);
+
+    node.application_downlink_queue = try db.allocator.alloc(lorawan.types.ApplicationDownlink, 2);
+    node.application_downlink_queue.?[0] = lorawan.types.ApplicationDownlink.init(false, 15, try db.allocator.dupe(u8, "hello"));
+    node.application_downlink_queue.?[1] = lorawan.types.ApplicationDownlink.init(false, 9, try db.allocator.dupe(u8, "bye"));
     try repo.upsertNode(db.allocator, node);
 }
 

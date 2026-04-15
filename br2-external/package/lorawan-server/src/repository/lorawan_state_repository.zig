@@ -156,6 +156,7 @@ pub const Repository = struct {
         node.last_battery = jsonOptionalU8(object, "last_battery");
         node.last_dev_status_margin = jsonOptionalI8(object, "last_margin");
         node.pending_mac_commands = if (jsonOptionalString(object, "pending_mac_commands")) |value| try parseHexSlice(allocator, value) else null;
+        node.application_downlink_queue = try parseApplicationDownlinkQueue(allocator, object.get("application_downlink_queue"));
         node.pending_confirmed_downlink = if (jsonOptionalString(object, "pending_confirmed_downlink")) |value| try parseHexSlice(allocator, value) else null;
         node.confirmed_downlink_retries = jsonOptionalU8(object, "confirmed_downlink_retries") orelse 0;
         return node;
@@ -201,6 +202,8 @@ fn encodeNodeJson(allocator: std.mem.Allocator, node: types.Node) ![]u8 {
     defer if (dev_eui) |value| allocator.free(value);
     const pending_mac_commands = if (node.pending_mac_commands) |value| try hexString(allocator, value) else null;
     defer if (pending_mac_commands) |value| allocator.free(value);
+    const application_downlink_queue = if (node.application_downlink_queue) |value| try encodeApplicationDownlinkQueue(allocator, value) else null;
+    defer if (application_downlink_queue) |value| freeApplicationDownlinkQueueJson(allocator, value);
     const pending_confirmed_downlink = if (node.pending_confirmed_downlink) |value| try hexString(allocator, value) else null;
     defer if (pending_confirmed_downlink) |value| allocator.free(value);
 
@@ -229,9 +232,69 @@ fn encodeNodeJson(allocator: std.mem.Allocator, node: types.Node) ![]u8 {
         .last_battery = node.last_battery,
         .last_margin = node.last_dev_status_margin,
         .pending_mac_commands = pending_mac_commands,
+        .application_downlink_queue = application_downlink_queue,
         .pending_confirmed_downlink = pending_confirmed_downlink,
         .confirmed_downlink_retries = node.confirmed_downlink_retries,
     }, .{});
+}
+
+const ApplicationDownlinkQueueJson = struct {
+    confirmed: bool,
+    port: u8,
+    payload: []const u8,
+};
+
+fn parseApplicationDownlinkQueue(allocator: std.mem.Allocator, value: ?std.json.Value) !?[]types.ApplicationDownlink {
+    const root = value orelse return null;
+    if (root != .array) return null;
+
+    var out = std.ArrayListUnmanaged(types.ApplicationDownlink){};
+    errdefer {
+        for (out.items) |item| item.deinit(allocator);
+        out.deinit(allocator);
+    }
+
+    for (root.array.items) |item| {
+        if (item != .object) continue;
+        const port = jsonOptionalU8(item.object, "port") orelse continue;
+        const payload_hex = jsonOptionalString(item.object, "payload") orelse continue;
+        try out.append(allocator, types.ApplicationDownlink.init(
+            jsonOptionalBool(item.object, "confirmed") orelse false,
+            port,
+            try parseHexSlice(allocator, payload_hex),
+        ));
+    }
+
+    if (out.items.len == 0) return null;
+    return try out.toOwnedSlice(allocator);
+}
+
+fn encodeApplicationDownlinkQueue(allocator: std.mem.Allocator, queue: []const types.ApplicationDownlink) ![]ApplicationDownlinkQueueJson {
+    const out = try allocator.alloc(ApplicationDownlinkQueueJson, queue.len);
+    errdefer {
+        var i: usize = 0;
+        while (i < queue.len) : (i += 1) {
+            if (out[i].payload.len == 0) break;
+            allocator.free(@constCast(out[i].payload));
+        }
+        allocator.free(out);
+    }
+    @memset(out, .{ .confirmed = false, .port = 0, .payload = "" });
+
+    for (queue, 0..) |item, i| {
+        out[i] = .{
+            .confirmed = item.confirmed,
+            .port = item.port,
+            .payload = try hexString(allocator, item.payload),
+        };
+    }
+
+    return out;
+}
+
+fn freeApplicationDownlinkQueueJson(allocator: std.mem.Allocator, queue: []ApplicationDownlinkQueueJson) void {
+    for (queue) |item| allocator.free(@constCast(item.payload));
+    allocator.free(queue);
 }
 
 fn encodeDeviceJson(allocator: std.mem.Allocator, device: types.Device) ![]u8 {

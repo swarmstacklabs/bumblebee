@@ -78,6 +78,7 @@ test "checked structs declare init and deinit" {
         expectInitDeinit(types.Device, "types.Device");
         expectInitDeinit(types.Network, "types.Network");
         expectInitDeinit(types.Gateway, "types.Gateway");
+        expectInitDeinit(types.ApplicationDownlink, "types.ApplicationDownlink");
         expectInitDeinit(types.Node, "types.Node");
         expectInitDeinit(types.TxData, "types.TxData");
         expectInitDeinit(types.JoinRequest, "types.JoinRequest");
