@@ -186,10 +186,22 @@ pub const Service = struct {
         var downlink: ?packets.DownlinkRequest = null;
         const response_commands = try codec.buildMacResponses(allocator, parsed, rxTimeMs(rxpk), 1);
         defer allocator.free(response_commands);
+        const pending_commands = try parsePendingCommands(allocator, node.pending_mac_commands);
+        defer allocator.free(pending_commands);
+        const network_commands = try mac_handlers.buildNetworkCommands(
+            allocator,
+            node,
+            network.rxwin_init,
+            network.rx1_delay_s,
+            pending_commands,
+        );
+        defer allocator.free(network_commands);
+        const outgoing_commands = try appendCommands(allocator, response_commands, network_commands);
+        defer allocator.free(outgoing_commands);
 
-        if (response_commands.len > 0 or parsed.confirmed) {
-            const f_opts = if (response_commands.len > 0)
-                try commands.encodeFOpts(allocator, response_commands)
+        if (outgoing_commands.len > 0 or parsed.confirmed) {
+            const f_opts = if (outgoing_commands.len > 0)
+                try commands.encodeFOpts(allocator, outgoing_commands)
             else
                 try allocator.alloc(u8, 0);
             defer allocator.free(f_opts);
@@ -207,9 +219,6 @@ pub const Service = struct {
 
         if (codec.collectMacCommands(allocator, parsed)) |status_commands| {
             defer allocator.free(status_commands);
-            const pending_commands = try parsePendingCommands(allocator, node.pending_mac_commands);
-            defer allocator.free(pending_commands);
-
             const remaining_pending = try mac_handlers.applyToNode(allocator, &node, pending_commands, status_commands);
             defer allocator.free(remaining_pending);
 
@@ -284,6 +293,13 @@ fn appendPendingMacCommands(allocator: std.mem.Allocator, existing: ?[]const u8,
     const out = try allocator.alloc(u8, existing_len + new.len);
     if (existing) |value| @memcpy(out[0..value.len], value);
     @memcpy(out[existing_len..], new);
+    return out;
+}
+
+fn appendCommands(allocator: std.mem.Allocator, first: []const Command, second: []const Command) ![]Command {
+    const out = try allocator.alloc(Command, first.len + second.len);
+    @memcpy(out[0..first.len], first);
+    @memcpy(out[first.len..], second);
     return out;
 }
 

@@ -53,6 +53,36 @@ pub fn buildResponses(allocator: std.mem.Allocator, incoming: []const commands.C
     return ctx.response_commands.toOwnedSlice(allocator);
 }
 
+pub fn buildNetworkCommands(
+    allocator: std.mem.Allocator,
+    node: types.Node,
+    network_rxwin: types.RxWindowConfig,
+    network_rx1_delay_s: u32,
+    pending_commands: []const commands.Command,
+) ![]commands.Command {
+    var out = std.ArrayList(commands.Command){};
+    errdefer out.deinit(allocator);
+
+    if ((node.last_battery == null or node.last_dev_status_margin == null) and !containsCommandTag(pending_commands, .dev_status_req)) {
+        try out.append(allocator, .dev_status_req);
+    }
+
+    if (!rxWindowEqual(node.rxwin_use, network_rxwin) and !containsCommandTag(pending_commands, .rx_param_setup_req)) {
+        try out.append(allocator, .{ .rx_param_setup_req = .{
+            .rx1_dr_offset = network_rxwin.rx1_dr_offset,
+            .rx2_data_rate = network_rxwin.rx2_data_rate,
+            .frequency_100hz = hz100FromFreq(network_rxwin.frequency),
+        } });
+    }
+
+    const desired_rx1_delay: u8 = @intCast(if (network_rx1_delay_s == 1) 0 else network_rx1_delay_s);
+    if (node.rx1_delay_s != null and node.rx1_delay_s.? != @as(u8, @intCast(network_rx1_delay_s)) and !containsCommandTag(pending_commands, .rx_timing_setup_req)) {
+        try out.append(allocator, .{ .rx_timing_setup_req = .{ .delay = desired_rx1_delay } });
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
 fn dispatchIgnoringMissing(ctx: *context_mod.Context, incoming: []const commands.Command) !void {
     for (incoming, 0..) |command, command_index| {
         dispatcher.handle(ctx, command_index, command) catch |err| switch (err) {
@@ -229,6 +259,23 @@ fn expectedPendingTag(answer: commands.Command) ?context_mod.CommandTag {
     };
 }
 
+fn containsCommandTag(values: []const commands.Command, tag: context_mod.CommandTag) bool {
+    for (values) |value| {
+        if (std.meta.activeTag(value) == tag) return true;
+    }
+    return false;
+}
+
+fn rxWindowEqual(a: types.RxWindowConfig, b: types.RxWindowConfig) bool {
+    return a.rx1_dr_offset == b.rx1_dr_offset and
+        a.rx2_data_rate == b.rx2_data_rate and
+        a.frequency == b.frequency;
+}
+
+fn hz100FromFreq(freq: f64) u32 {
+    return @intFromFloat(std.math.round(freq * 10_000.0));
+}
+
 fn applyChannelMaskState(allocator: std.mem.Allocator, node: *types.Node, control: u8, mask: u16) !void {
     var masks = if (node.channel_masks) |existing|
         try allocator.dupe(types.ChannelMaskState, existing)
@@ -397,6 +444,50 @@ test "mac command handlers build responses via dispatcher" {
     try std.testing.expectEqual(@as(u8, 3), response[0].link_check_ans.gateway_count);
     try std.testing.expect(response[1] == .device_time_ans);
     try std.testing.expectEqual(@as(i64, 1234), response[1].device_time_ans.milliseconds_since_epoch);
+}
+
+test "mac command handlers build network-originated commands from node policy" {
+    var node = types.Node.init([_]u8{ 1, 2, 3, 4 }, [_]u8{0} ** 16, [_]u8{0} ** 16, .{}, .{ .tx_power = 0, .data_rate = 0 });
+    defer node.deinit(std.testing.allocator);
+    node.rxwin_use = .{ .rx1_dr_offset = 1, .rx2_data_rate = 5, .frequency = 868.7 };
+    node.rx1_delay_s = 5;
+
+    const generated = try buildNetworkCommands(
+        std.testing.allocator,
+        node,
+        .{ .rx1_dr_offset = 3, .rx2_data_rate = 4, .frequency = 869.525 },
+        1,
+        &.{},
+    );
+    defer std.testing.allocator.free(generated);
+
+    try std.testing.expectEqual(@as(usize, 3), generated.len);
+    try std.testing.expect(generated[0] == .dev_status_req);
+    try std.testing.expectEqual(@as(u8, 3), generated[1].rx_param_setup_req.rx1_dr_offset);
+    try std.testing.expectEqual(@as(u32, 8695250), generated[1].rx_param_setup_req.frequency_100hz);
+    try std.testing.expectEqual(@as(u8, 0), generated[2].rx_timing_setup_req.delay);
+}
+
+test "mac command handlers skip already pending network-originated commands" {
+    var node = types.Node.init([_]u8{ 1, 2, 3, 4 }, [_]u8{0} ** 16, [_]u8{0} ** 16, .{}, .{ .tx_power = 0, .data_rate = 0 });
+    defer node.deinit(std.testing.allocator);
+    node.rxwin_use = .{ .rx1_dr_offset = 1, .rx2_data_rate = 5, .frequency = 868.7 };
+    node.rx1_delay_s = 5;
+
+    const generated = try buildNetworkCommands(
+        std.testing.allocator,
+        node,
+        .{ .rx1_dr_offset = 3, .rx2_data_rate = 4, .frequency = 869.525 },
+        1,
+        &[_]commands.Command{
+            .dev_status_req,
+            .{ .rx_param_setup_req = .{ .rx1_dr_offset = 3, .rx2_data_rate = 4, .frequency_100hz = 8695250 } },
+            .{ .rx_timing_setup_req = .{ .delay = 0 } },
+        },
+    );
+    defer std.testing.allocator.free(generated);
+
+    try std.testing.expectEqual(@as(usize, 0), generated.len);
 }
 
 test "mac command handlers update node state" {
