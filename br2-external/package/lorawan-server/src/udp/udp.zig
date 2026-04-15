@@ -649,6 +649,80 @@ test "tx ack persists pending mac commands and later uplink syncs node state" {
     }
 }
 
+test "duplicate uplink frame counter is rejected without mutating node state" {
+    const allocator = std.testing.allocator;
+    var harness = try TestHarness.init(allocator);
+    defer harness.deinit();
+    var server = harness.server();
+
+    const fixture = ForwarderFixture{};
+    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
+    try seedNode(
+        harness.app.database(),
+        [_]u8{ 0x01, 0x02, 0x03, 0x04 },
+        [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F },
+        [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F },
+    );
+
+    const nwk_s_key = [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F };
+    const uplink_phy = try encodeDataUplink(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 }, nwk_s_key, 1, &[_]u8{});
+    defer allocator.free(uplink_phy);
+    const uplink_b64 = try encodeBase64Alloc(allocator, uplink_phy);
+    defer allocator.free(uplink_b64);
+
+    const first_rxpk_json = try fixture.rxpkPayloadJson(allocator, uplink_b64, 100);
+    defer allocator.free(first_rxpk_json);
+    const first_push_data = try fixture.pushDataWithJson(allocator, 0x4444, first_rxpk_json);
+    defer allocator.free(first_push_data);
+
+    try harness.sendFromClient(first_push_data);
+    try drainReady(&server);
+
+    const first_push_ack = try harness.recvOnClient();
+    defer allocator.free(first_push_ack);
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        packets.semtech_version,
+        0x44,
+        0x44,
+        packets.push_ack_ident,
+    }, first_push_ack);
+
+    {
+        const repo = state_repository.Repository.init(harness.app.database());
+        const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
+        defer node.deinit(allocator);
+        try std.testing.expectEqual(@as(?u32, 1), node.f_cnt_up);
+    }
+    try std.testing.expectEqual(@as(i64, 1), try countEvents(&harness.app, "lorawan_uplink"));
+
+    const duplicate_rxpk_json = try fixture.rxpkPayloadJson(allocator, uplink_b64, 101);
+    defer allocator.free(duplicate_rxpk_json);
+    const duplicate_push_data = try fixture.pushDataWithJson(allocator, 0x5555, duplicate_rxpk_json);
+    defer allocator.free(duplicate_push_data);
+
+    try harness.sendFromClient(duplicate_push_data);
+    try drainReady(&server);
+
+    const duplicate_push_ack = try harness.recvOnClient();
+    defer allocator.free(duplicate_push_ack);
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        packets.semtech_version,
+        0x55,
+        0x55,
+        packets.push_ack_ident,
+    }, duplicate_push_ack);
+    try std.testing.expectError(error.Timeout, harness.recvOnClient());
+
+    {
+        const repo = state_repository.Repository.init(harness.app.database());
+        const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
+        defer node.deinit(allocator);
+        try std.testing.expectEqual(@as(?u32, 1), node.f_cnt_up);
+        try std.testing.expect(node.pending_mac_commands == null);
+    }
+    try std.testing.expectEqual(@as(i64, 1), try countEvents(&harness.app, "lorawan_uplink"));
+}
+
 const ForwarderFixture = struct {
     gateway_mac: [8]u8 = .{ 1, 2, 3, 4, 5, 6, 7, 8 },
     freq: f64 = 868.10,

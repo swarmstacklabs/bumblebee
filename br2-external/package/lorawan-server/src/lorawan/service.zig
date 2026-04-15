@@ -151,8 +151,14 @@ pub const Service = struct {
     fn handleDataFrame(self: Service, allocator: std.mem.Allocator, gateway_mac: [8]u8, gateway: types.Gateway, network: types.Network, rxpk: Rxpk, frame: types.DataFrame) !?IngestResult {
         var node = (try self.state_repo.findNodeByDevAddr(allocator, frame.dev_addr)) orelse return null;
         defer node.deinit(allocator);
-        if (!codec.verifyDataFrameMic(rxpk.data, node.nwk_s_key, frame.dev_addr, codec.fullFCnt(node.f_cnt_up, frame.f_cnt16), if (frame.is_uplink) 0 else 1)) {
+        if (!frame.is_uplink) return null;
+
+        const full_f_cnt = codec.fullFCnt(node.f_cnt_up, frame.f_cnt16);
+        if (!codec.verifyDataFrameMic(rxpk.data, node.nwk_s_key, frame.dev_addr, full_f_cnt, 0)) {
             return null;
+        }
+        if (node.f_cnt_up) |previous_f_cnt| {
+            if (full_f_cnt <= previous_f_cnt) return null;
         }
 
         var parsed = try codec.decodeDataPayload(allocator, frame, node);
