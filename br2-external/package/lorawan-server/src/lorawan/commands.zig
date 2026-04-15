@@ -101,6 +101,81 @@ pub fn parseFOpts(allocator: std.mem.Allocator, payload: []const u8) ![]Command 
     return out.toOwnedSlice(allocator);
 }
 
+pub fn parseDownlinkFOpts(allocator: std.mem.Allocator, payload: []const u8) ![]Command {
+    var out = std.ArrayList(Command){};
+    errdefer out.deinit(allocator);
+
+    var rest = payload;
+    while (rest.len > 0) {
+        switch (rest[0]) {
+            0x03 => {
+                if (rest.len < 5) return error.InvalidMacCommand;
+                try out.append(allocator, .{ .link_adr_req = .{
+                    .data_rate = rest[1] >> 4,
+                    .tx_power = rest[1] & 0x0F,
+                    .channel_mask = std.mem.readInt(u16, rest[2..4], .little),
+                    .ch_mask_cntl = (rest[4] >> 4) & 0x07,
+                    .nb_rep = rest[4] & 0x0F,
+                } });
+                rest = rest[5..];
+            },
+            0x04 => {
+                if (rest.len < 2) return error.InvalidMacCommand;
+                try out.append(allocator, .{ .duty_cycle_req = .{ .max_dcycle = rest[1] & 0x0F } });
+                rest = rest[2..];
+            },
+            0x05 => {
+                if (rest.len < 5) return error.InvalidMacCommand;
+                try out.append(allocator, .{ .rx_param_setup_req = .{
+                    .rx1_dr_offset = (rest[1] >> 4) & 0x07,
+                    .rx2_data_rate = rest[1] & 0x0F,
+                    .frequency_100hz = @as(u32, rest[2]) | (@as(u32, rest[3]) << 8) | (@as(u32, rest[4]) << 16),
+                } });
+                rest = rest[5..];
+            },
+            0x06 => {
+                try out.append(allocator, .dev_status_req);
+                rest = rest[1..];
+            },
+            0x07 => {
+                if (rest.len < 6) return error.InvalidMacCommand;
+                try out.append(allocator, .{ .new_channel_req = .{
+                    .channel_index = rest[1],
+                    .frequency_100hz = @as(u32, rest[2]) | (@as(u32, rest[3]) << 8) | (@as(u32, rest[4]) << 16),
+                    .max_dr = rest[5] >> 4,
+                    .min_dr = rest[5] & 0x0F,
+                } });
+                rest = rest[6..];
+            },
+            0x08 => {
+                if (rest.len < 2) return error.InvalidMacCommand;
+                try out.append(allocator, .{ .rx_timing_setup_req = .{ .delay = rest[1] & 0x0F } });
+                rest = rest[2..];
+            },
+            0x09 => {
+                if (rest.len < 2) return error.InvalidMacCommand;
+                try out.append(allocator, .{ .tx_param_setup_req = .{
+                    .downlink_dwell = (rest[1] & 0x20) != 0,
+                    .uplink_dwell = (rest[1] & 0x10) != 0,
+                    .max_eirp = rest[1] & 0x0F,
+                } });
+                rest = rest[2..];
+            },
+            0x0A => {
+                if (rest.len < 5) return error.InvalidMacCommand;
+                try out.append(allocator, .{ .dl_channel_req = .{
+                    .channel_index = rest[1],
+                    .frequency_100hz = @as(u32, rest[2]) | (@as(u32, rest[3]) << 8) | (@as(u32, rest[4]) << 16),
+                } });
+                rest = rest[5..];
+            },
+            else => return error.UnknownMacCommand,
+        }
+    }
+
+    return out.toOwnedSlice(allocator);
+}
+
 pub fn encodeFOpts(allocator: std.mem.Allocator, commands: []const Command) ![]u8 {
     var out = std.ArrayList(u8){};
     errdefer out.deinit(allocator);
@@ -183,4 +258,15 @@ test "mac commands parse and encode core set" {
     defer allocator.free(encoded);
 
     try std.testing.expectEqualSlices(u8, &[_]u8{ 0x02, 10, 2, 0x06, 0x08, 0x03 }, encoded);
+}
+
+test "downlink mac requests parse from fopts" {
+    const parsed = try parseDownlinkFOpts(std.testing.allocator, &[_]u8{ 0x03, 0x57, 0xFF, 0x00, 0x01, 0x08, 0x03 });
+    defer std.testing.allocator.free(parsed);
+
+    try std.testing.expectEqual(@as(usize, 2), parsed.len);
+    try std.testing.expectEqual(@as(u8, 5), parsed[0].link_adr_req.data_rate);
+    try std.testing.expectEqual(@as(u8, 7), parsed[0].link_adr_req.tx_power);
+    try std.testing.expectEqual(@as(u16, 0x00FF), parsed[0].link_adr_req.channel_mask);
+    try std.testing.expectEqual(@as(u8, 3), parsed[1].rx_timing_setup_req.delay);
 }

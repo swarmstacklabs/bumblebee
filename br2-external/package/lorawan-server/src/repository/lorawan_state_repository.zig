@@ -126,6 +126,7 @@ pub const Repository = struct {
         node.f_cnt_down = jsonOptionalU32(object, "fcntdown") orelse 0;
         node.last_battery = jsonOptionalU8(object, "last_battery");
         node.last_dev_status_margin = jsonOptionalI8(object, "last_margin");
+        node.pending_mac_commands = if (jsonOptionalString(object, "pending_mac_commands")) |value| try parseHexSlice(allocator, value) else null;
         return node;
     }
 
@@ -167,6 +168,8 @@ fn encodeNodeJson(allocator: std.mem.Allocator, node: types.Node) ![]u8 {
 
     const dev_eui = if (node.dev_eui) |value| try hexString(allocator, &value) else null;
     defer if (dev_eui) |value| allocator.free(value);
+    const pending_mac_commands = if (node.pending_mac_commands) |value| try hexString(allocator, value) else null;
+    defer if (pending_mac_commands) |value| allocator.free(value);
 
     return std.json.Stringify.valueAlloc(allocator, .{
         .appskey = app_s_key,
@@ -183,6 +186,7 @@ fn encodeNodeJson(allocator: std.mem.Allocator, node: types.Node) ![]u8 {
         .adr_data_rate = node.adr_use.data_rate,
         .last_battery = node.last_battery,
         .last_margin = node.last_dev_status_margin,
+        .pending_mac_commands = pending_mac_commands,
     }, .{});
 }
 
@@ -252,6 +256,14 @@ pub fn parseHexArray(comptime len: usize, text: []const u8) ![len]u8 {
     if (text.len != len * 2) return error.InvalidHexLength;
     var out: [len]u8 = undefined;
     _ = try std.fmt.hexToBytes(&out, text);
+    return out;
+}
+
+pub fn parseHexSlice(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
+    if ((text.len % 2) != 0) return error.InvalidHexLength;
+    const out = try allocator.alloc(u8, text.len / 2);
+    errdefer allocator.free(out);
+    _ = try std.fmt.hexToBytes(out, text);
     return out;
 }
 

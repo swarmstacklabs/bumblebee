@@ -9,6 +9,7 @@ const state_repository = @import("../repository/lorawan_state_repository.zig");
 const types = @import("types.zig");
 const Database = app_mod.Database;
 const Rxpk = packets.Rxpk;
+const Command = commands.Command;
 
 pub const IngestResult = struct {
     event_type: []const u8,
@@ -63,6 +64,28 @@ pub const Service = struct {
         };
     }
 
+    pub fn syncAcknowledgedDownlink(self: Service, allocator: std.mem.Allocator, pending_json: []const u8) !void {
+        const phy_payload = try decodePendingPhyPayload(allocator, pending_json);
+        defer allocator.free(phy_payload);
+
+        const decoded = codec.decodeFrame(phy_payload) catch return;
+        const frame = switch (decoded) {
+            .data => |value| value,
+            else => return,
+        };
+
+        if (frame.f_opts.len == 0) return;
+
+        var node = (try self.state_repo.findNodeByDevAddr(allocator, frame.dev_addr)) orelse return;
+        defer node.deinit(allocator);
+
+        const combined = try appendPendingMacCommands(allocator, node.pending_mac_commands, frame.f_opts);
+        if (node.pending_mac_commands) |value| allocator.free(value);
+        node.pending_mac_commands = combined;
+
+        try self.state_repo.upsertNode(allocator, node);
+    }
+
     fn handleJoinRequest(self: Service, allocator: std.mem.Allocator, gateway_mac: [8]u8, gateway: types.Gateway, network: types.Network, rxpk: Rxpk, join: types.JoinRequest) !?IngestResult {
         var device = (try self.state_repo.findDeviceByDevEui(allocator, join.dev_eui)) orelse return null;
         defer device.deinit(allocator);
@@ -78,6 +101,7 @@ pub const Service = struct {
         _ = try self.state_repo.createNodeForJoin(allocator, device, network, dev_addr, session.app_s_key, session.nwk_s_key);
 
         const join_accept = try codec.encodeJoinAccept(
+            allocator,
             device.app_key,
             app_nonce,
             network.net_id,
@@ -91,12 +115,19 @@ pub const Service = struct {
         const dev_addr_hex = try state_repository.hexString(allocator, &dev_addr);
         errdefer allocator.free(dev_addr_hex);
 
+        const dev_eui_hex = try state_repository.hexString(allocator, &join.dev_eui);
+        defer allocator.free(dev_eui_hex);
+        const app_eui_hex = try state_repository.hexString(allocator, &join.app_eui);
+        defer allocator.free(app_eui_hex);
+        const join_nonce_hex = try state_repository.hexString(allocator, &app_nonce);
+        defer allocator.free(join_nonce_hex);
+
         const event_json = try std.json.Stringify.valueAlloc(allocator, .{
             .gateway_mac = gateway_mac_hex(gateway_mac),
-            .dev_eui = try state_repository.hexString(allocator, &join.dev_eui),
-            .app_eui = try state_repository.hexString(allocator, &join.app_eui),
+            .dev_eui = dev_eui_hex,
+            .app_eui = app_eui_hex,
             .dev_addr = dev_addr_hex,
-            .join_nonce = try state_repository.hexString(allocator, &app_nonce),
+            .join_nonce = join_nonce_hex,
         }, .{});
 
         return .{
@@ -119,6 +150,7 @@ pub const Service = struct {
 
     fn handleDataFrame(self: Service, allocator: std.mem.Allocator, gateway_mac: [8]u8, gateway: types.Gateway, network: types.Network, rxpk: Rxpk, frame: types.DataFrame) !?IngestResult {
         var node = (try self.state_repo.findNodeByDevAddr(allocator, frame.dev_addr)) orelse return null;
+        defer node.deinit(allocator);
         if (!codec.verifyDataFrameMic(rxpk.data, node.nwk_s_key, frame.dev_addr, codec.fullFCnt(node.f_cnt_up, frame.f_cnt16), if (frame.is_uplink) 0 else 1)) {
             return null;
         }
@@ -153,7 +185,19 @@ pub const Service = struct {
 
         if (codec.collectMacCommands(allocator, parsed)) |status_commands| {
             defer allocator.free(status_commands);
-            try mac_handlers.applyToNode(allocator, &node, status_commands);
+            const pending_commands = try parsePendingCommands(allocator, node.pending_mac_commands);
+            defer allocator.free(pending_commands);
+
+            const remaining_pending = try mac_handlers.applyToNode(allocator, &node, pending_commands, status_commands);
+            defer allocator.free(remaining_pending);
+
+            if (node.pending_mac_commands) |value| {
+                allocator.free(value);
+                node.pending_mac_commands = null;
+            }
+            if (remaining_pending.len > 0) {
+                node.pending_mac_commands = try commands.encodeFOpts(allocator, remaining_pending);
+            }
         } else |_| {}
 
         try self.state_repo.upsertNode(allocator, node);
@@ -206,4 +250,35 @@ fn rxTimeMs(rxpk: Rxpk) i64 {
 
 fn gateway_mac_hex(mac: [8]u8) [16]u8 {
     return packets.gatewayMacHex(mac);
+}
+
+fn parsePendingCommands(allocator: std.mem.Allocator, pending_mac_commands: ?[]const u8) ![]Command {
+    const bytes = pending_mac_commands orelse return allocator.alloc(Command, 0);
+    return commands.parseDownlinkFOpts(allocator, bytes);
+}
+
+fn appendPendingMacCommands(allocator: std.mem.Allocator, existing: ?[]const u8, new: []const u8) ![]u8 {
+    const existing_len = if (existing) |value| value.len else 0;
+    const out = try allocator.alloc(u8, existing_len + new.len);
+    if (existing) |value| @memcpy(out[0..value.len], value);
+    @memcpy(out[existing_len..], new);
+    return out;
+}
+
+fn decodePendingPhyPayload(allocator: std.mem.Allocator, pending_json: []const u8) ![]u8 {
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, pending_json, .{ .ignore_unknown_fields = true });
+    defer parsed.deinit();
+
+    const root = parsed.value.object;
+    const txpk = root.get("txpk") orelse return error.MissingTxpk;
+    if (txpk != .object) return error.InvalidPendingJson;
+    const data = txpk.object.get("data") orelse return error.MissingTxpkData;
+    if (data != .string) return error.InvalidPendingJson;
+
+    const decoder = std.base64.standard.Decoder;
+    const decoded_len = try decoder.calcSizeForSlice(data.string);
+    const out = try allocator.alloc(u8, decoded_len);
+    errdefer allocator.free(out);
+    try decoder.decode(out, data.string);
+    return out;
 }

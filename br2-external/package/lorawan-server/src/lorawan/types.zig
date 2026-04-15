@@ -117,6 +117,7 @@ pub const Node = struct {
     adr_use: AdrConfig,
     last_dev_status_margin: ?i8,
     last_battery: ?u8,
+    pending_mac_commands: ?[]u8,
 
     pub fn init(dev_addr: [4]u8, app_s_key: [16]u8, nwk_s_key: [16]u8, rxwin_use: RxWindowConfig, adr_use: AdrConfig) Node {
         return .{
@@ -132,10 +133,13 @@ pub const Node = struct {
             .adr_use = adr_use,
             .last_dev_status_margin = null,
             .last_battery = null,
+            .pending_mac_commands = null,
         };
     }
 
-    pub fn deinit(_: Node) void {}
+    pub fn deinit(self: Node, allocator: std.mem.Allocator) void {
+        if (self.pending_mac_commands) |value| allocator.free(value);
+    }
 };
 
 pub const TxData = struct {

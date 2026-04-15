@@ -100,7 +100,7 @@ pub fn deriveSessionKeys(app_key: [16]u8, app_nonce: [3]u8, net_id: [3]u8, dev_n
     };
 }
 
-pub fn encodeJoinAccept(app_key: [16]u8, app_nonce: [3]u8, net_id: [3]u8, dev_addr: [4]u8, rx1_dr_offset: u8, rx2_data_rate: u8, rx_delay: u8, cf_list_100hz: ?[]const u32) ![]u8 {
+pub fn encodeJoinAccept(allocator: std.mem.Allocator, app_key: [16]u8, app_nonce: [3]u8, net_id: [3]u8, dev_addr: [4]u8, rx1_dr_offset: u8, rx2_data_rate: u8, rx_delay: u8, cf_list_100hz: ?[]const u32) ![]u8 {
     var buffer: [33]u8 = undefined;
     var index: usize = 0;
     buffer[index] = 0b00100000;
@@ -139,8 +139,8 @@ pub fn encodeJoinAccept(app_key: [16]u8, app_nonce: [3]u8, net_id: [3]u8, dev_ad
     index += 4;
 
     const cipher_len = index - 1;
-    const encrypted = try std.heap.page_allocator.alloc(u8, index);
-    errdefer std.heap.page_allocator.free(encrypted);
+    const encrypted = try allocator.alloc(u8, index);
+    errdefer allocator.free(encrypted);
 
     encrypted[0] = buffer[0];
     const ctx = Aes128.initDec(app_key);

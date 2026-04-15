@@ -5,9 +5,11 @@ const app_mod = @import("../app.zig");
 const event_repository = @import("../repository/event_repository.zig");
 const logger = @import("../logger.zig");
 const lorawan = @import("../lorawan.zig");
+const storage = @import("../storage.zig");
 const udp_transport = @import("transport.zig");
 const App = app_mod.App;
 const Config = app_mod.Config;
+const state_repository = lorawan.state_repository;
 const gateway_registry = lorawan.gateway_registry;
 const pending_downlinks = lorawan.pending_downlinks;
 const packets = lorawan.packets;
@@ -222,8 +224,14 @@ fn handleTxAck(context: *UdpPacketContext, version: u8, token: u16) !void {
         else => return,
     };
 
+    const registry = gateway_registry.Registry.init(context.server.app.database());
+    const runtime = try registry.get(ack.gateway_mac);
+    defer if (runtime) |value| value.deinit(context.server.app.allocator);
+
+    const runtime_matches = runtime != null and runtime.?.pending_downlink_token != null and runtime.?.pending_downlink_token.? == ack.token;
     const maybe_pending = context.server.app.pending_downlinks.take(ack.gateway_mac, ack.token);
-    if (maybe_pending == null) {
+    defer if (maybe_pending) |pending| pending_downlinks.freeEntry(context.server.app.allocator, pending);
+    if (maybe_pending == null and !runtime_matches) {
         logger.warn("udp", "unknown_tx_ack_token", "received tx ack for unknown token", .{
             .token = ack.token,
             .gateway_mac = packets.gatewayMacHex(ack.gateway_mac),
@@ -231,13 +239,14 @@ fn handleTxAck(context: *UdpPacketContext, version: u8, token: u16) !void {
         return;
     }
 
-    const pending = maybe_pending.?;
-    defer pending_downlinks.freeEntry(context.server.app.allocator, pending);
-
-    const delay_ms = std.time.milliTimestamp() - pending.sent_at_ms;
+    const delay_ms = if (maybe_pending) |pending| std.time.milliTimestamp() - pending.sent_at_ms else 0;
     const status = if (ack.error_name) |value| value else "NONE";
 
-    const registry = gateway_registry.Registry.init(context.server.app.database());
+    if (runtime_matches and std.ascii.eqlIgnoreCase(status, "NONE") and runtime.?.pending_downlink_json != null) {
+        const lorawan_service = lorawan.service.Service.init(context.server.app.database());
+        try lorawan_service.syncAcknowledgedDownlink(context.server.app.allocator, runtime.?.pending_downlink_json.?);
+    }
+
     try registry.clearPending(ack.gateway_mac, ack.token);
 
     try registry.insertEvent("gateway_tx_ack", ack.gateway_mac, try packets.encodeTxAckEvent(
@@ -245,7 +254,7 @@ fn handleTxAck(context: *UdpPacketContext, version: u8, token: u16) !void {
         ack.gateway_mac,
         ack.token,
         delay_ms,
-        pending.dev_addr,
+        if (maybe_pending) |pending| pending.dev_addr else null,
         status,
     ));
 
@@ -482,6 +491,164 @@ test "pending downlinks are isolated by gateway mac for matching tokens" {
     try std.testing.expectEqualStrings("AABBCCDD", pending_b.dev_addr.?);
 }
 
+test "join requests load registered devices from storage and create a node" {
+    const allocator = std.testing.allocator;
+    var harness = try TestHarness.init(allocator);
+    defer harness.deinit();
+    var server = harness.server();
+
+    const fixture = ForwarderFixture{};
+    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
+    try seedDevice(harness.app.database(), "node-a", "1112131415161718", "0102030405060708", "2b7e151628aed2a6abf7158809cf4f3c", "public", "26011bda");
+
+    try harness.sendFromClient(&fixture.pullData(0x0001));
+    try drainReady(&server);
+    const pull_ack = try harness.recvOnClient();
+    defer allocator.free(pull_ack);
+
+    const join_payload = try encodeJoinRequest(
+        allocator,
+        [_]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 },
+        [_]u8{ 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18 },
+        [_]u8{ 0xAA, 0xBB },
+        [_]u8{ 0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6, 0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C },
+    );
+    defer allocator.free(join_payload);
+    const join_b64 = try encodeBase64Alloc(allocator, join_payload);
+    defer allocator.free(join_b64);
+    const rxpk_json = try fixture.rxpkPayloadJson(allocator, join_b64, 42);
+    defer allocator.free(rxpk_json);
+    const push_data = try fixture.pushDataWithJson(allocator, 0x1200, rxpk_json);
+    defer allocator.free(push_data);
+
+    try harness.sendFromClient(push_data);
+    try drainReady(&server);
+
+    const push_ack = try harness.recvOnClient();
+    defer allocator.free(push_ack);
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        packets.semtech_version,
+        0x12,
+        0x00,
+        packets.push_ack_ident,
+    }, push_ack);
+
+    const pull_resp = try harness.recvOnClient();
+    defer allocator.free(pull_resp);
+    try std.testing.expectEqual(@as(u8, packets.pull_resp_ident), pull_resp[3]);
+    try std.testing.expectEqual(@as(i64, 1), try countEvents(&harness.app, "lorawan_join_request"));
+
+    const repo = state_repository.Repository.init(harness.app.database());
+    const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x26, 0x01, 0x1B, 0xDA })).?;
+    defer node.deinit(allocator);
+    try std.testing.expectEqual(@as(?i64, 1), node.device_id);
+    try std.testing.expectEqual(@as(?u32, null), node.f_cnt_up);
+}
+
+test "tx ack persists pending mac commands and later uplink syncs node state" {
+    const allocator = std.testing.allocator;
+    var harness = try TestHarness.init(allocator);
+    defer harness.deinit();
+    var server = harness.server();
+
+    const fixture = ForwarderFixture{};
+    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
+    try seedNode(
+        harness.app.database(),
+        [_]u8{ 0x01, 0x02, 0x03, 0x04 },
+        [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F },
+        [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F },
+    );
+
+    try harness.sendFromClient(&fixture.pullData(0x0001));
+    try drainReady(&server);
+    const pull_ack = try harness.recvOnClient();
+    defer allocator.free(pull_ack);
+
+    const request_fopts = try lorawan.commands.encodeFOpts(allocator, &[_]lorawan.commands.Command{
+        .{ .link_adr_req = .{ .data_rate = 5, .tx_power = 7, .channel_mask = 0x00FF, .ch_mask_cntl = 0, .nb_rep = 1 } },
+    });
+    defer allocator.free(request_fopts);
+
+    const nwk_s_key = [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F };
+    const app_s_key = [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F };
+    const downlink_phy = try lorawan.codec.encodeDataDownlink(
+        allocator,
+        [_]u8{ 0x01, 0x02, 0x03, 0x04 },
+        nwk_s_key,
+        app_s_key,
+        1,
+        .{ .confirmed = false, .port = null, .data = "", .pending = false },
+        request_fopts,
+        false,
+        false,
+    );
+    defer allocator.free(downlink_phy);
+
+    const token = try sendDownlink(&harness.app, harness.socket, fixture.gateway_mac, .{
+        .gateway_mac = fixture.gateway_mac,
+        .dev_addr = "01020304",
+        .gateway_tmst = 7,
+        .rfch = 0,
+        .freq = 868.1,
+        .powe = 14,
+        .datr = .{ .lora = "SF9BW125" },
+        .codr = "4/5",
+        .timing = .{ .class_a_delay_s = 1 },
+        .phy_payload = downlink_phy,
+    });
+
+    const pull_resp = try harness.recvOnClient();
+    defer allocator.free(pull_resp);
+    try std.testing.expectEqual(@as(u8, packets.pull_resp_ident), pull_resp[3]);
+
+    const tx_ack = try fixture.txAck(allocator, token, "NONE");
+    defer allocator.free(tx_ack);
+    try harness.sendFromClient(tx_ack);
+    try drainReady(&server);
+
+    {
+        const repo = state_repository.Repository.init(harness.app.database());
+        const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
+        defer node.deinit(allocator);
+        try std.testing.expect(node.pending_mac_commands != null);
+        try std.testing.expectEqualSlices(u8, request_fopts, node.pending_mac_commands.?);
+    }
+
+    const uplink_fopts = try allocator.dupe(u8, &[_]u8{ 0x03, 0x07 });
+    defer allocator.free(uplink_fopts);
+    const uplink_phy = try encodeDataUplink(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 }, nwk_s_key, 1, uplink_fopts);
+    defer allocator.free(uplink_phy);
+    const uplink_b64 = try encodeBase64Alloc(allocator, uplink_phy);
+    defer allocator.free(uplink_b64);
+    const rxpk_json = try fixture.rxpkPayloadJson(allocator, uplink_b64, 77);
+    defer allocator.free(rxpk_json);
+    const push_data = try fixture.pushDataWithJson(allocator, 0x3333, rxpk_json);
+    defer allocator.free(push_data);
+
+    try harness.sendFromClient(push_data);
+    try drainReady(&server);
+
+    const push_ack = try harness.recvOnClient();
+    defer allocator.free(push_ack);
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        packets.semtech_version,
+        0x33,
+        0x33,
+        packets.push_ack_ident,
+    }, push_ack);
+
+    {
+        const repo = state_repository.Repository.init(harness.app.database());
+        const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
+        defer node.deinit(allocator);
+        try std.testing.expectEqual(@as(i32, 7), node.adr_use.tx_power);
+        try std.testing.expectEqual(@as(u8, 5), node.adr_use.data_rate);
+        try std.testing.expectEqual(@as(?u32, 1), node.f_cnt_up);
+        try std.testing.expect(node.pending_mac_commands == null);
+    }
+}
+
 const ForwarderFixture = struct {
     gateway_mac: [8]u8 = .{ 1, 2, 3, 4, 5, 6, 7, 8 },
     freq: f64 = 868.10,
@@ -689,4 +856,104 @@ fn expectPullRespTmst(allocator: std.mem.Allocator, json_payload: []const u8, ex
 
     const txpk = parsed.value.object.get("txpk").?.object;
     try std.testing.expectEqual(expected_tmst, txpk.get("tmst").?.integer);
+}
+
+fn seedGatewayNetwork(db: app_mod.Database, gateway_mac: [8]u8) !void {
+    const gateway_hex = packets.gatewayMacHex(gateway_mac);
+    const network_stmt = try storage.Statement.prepare(db.conn, "INSERT INTO networks(name, network_json) VALUES(?, ?);");
+    defer network_stmt.deinit();
+    network_stmt.bindText(1, "public");
+    network_stmt.bindText(2, "{\"netid\":\"000013\",\"tx_codr\":\"4/5\",\"join1_delay\":5,\"rx1_delay\":1,\"gw_power\":14,\"rxwin_init\":{\"rx1_dr_offset\":0,\"rx2_data_rate\":0,\"frequency\":869.525}}");
+    try network_stmt.expectDone();
+
+    const gateway_stmt = try storage.Statement.prepare(db.conn, "INSERT INTO gateways(mac, name, network_name, gateway_json) VALUES(?, ?, ?, ?);");
+    defer gateway_stmt.deinit();
+    gateway_stmt.bindText(1, gateway_hex[0..]);
+    gateway_stmt.bindText(2, "gateway-a");
+    gateway_stmt.bindText(3, "public");
+    gateway_stmt.bindText(4, "{\"tx_rfch\":0}");
+    try gateway_stmt.expectDone();
+}
+
+fn seedDevice(db: app_mod.Database, name: []const u8, dev_eui: []const u8, app_eui: []const u8, app_key: []const u8, network_name: []const u8, dev_addr: []const u8) !void {
+    const stmt = try storage.Statement.prepare(db.conn, "INSERT INTO devices(name, dev_eui, app_eui, app_key, device_json) VALUES(?, ?, ?, ?, ?);");
+    defer stmt.deinit();
+    const device_json = try std.fmt.allocPrint(db.allocator, "{{\"network_name\":\"{s}\",\"dev_addr\":\"{s}\"}}", .{ network_name, dev_addr });
+    defer db.allocator.free(device_json);
+    stmt.bindText(1, name);
+    stmt.bindText(2, dev_eui);
+    stmt.bindText(3, app_eui);
+    stmt.bindText(4, app_key);
+    stmt.bindText(5, device_json);
+    try stmt.expectDone();
+}
+
+fn seedNode(db: app_mod.Database, dev_addr: [4]u8, app_s_key: [16]u8, nwk_s_key: [16]u8) !void {
+    const repo = state_repository.Repository.init(db);
+    const node = lorawan.types.Node.init(dev_addr, app_s_key, nwk_s_key, .{}, .{ .tx_power = 0, .data_rate = 0 });
+    try repo.upsertNode(db.allocator, node);
+}
+
+fn encodeBase64Alloc(allocator: std.mem.Allocator, data: []const u8) ![]u8 {
+    const encoder = std.base64.standard.Encoder;
+    const out = try allocator.alloc(u8, encoder.calcSize(data.len));
+    _ = encoder.encode(out, data);
+    return out;
+}
+
+fn encodeDataUplink(allocator: std.mem.Allocator, dev_addr: [4]u8, nwk_s_key: [16]u8, f_cnt_up: u32, f_opts: []const u8) ![]u8 {
+    var buffer = std.ArrayList(u8){};
+    defer buffer.deinit(allocator);
+
+    try buffer.append(allocator, 0b01000000);
+
+    const dev_addr_le = [_]u8{ dev_addr[3], dev_addr[2], dev_addr[1], dev_addr[0] };
+    try buffer.appendSlice(allocator, &dev_addr_le);
+    try buffer.append(allocator, @intCast(f_opts.len));
+
+    var fcnt_buf: [2]u8 = undefined;
+    std.mem.writeInt(u16, &fcnt_buf, @intCast(f_cnt_up & 0xFFFF), .little);
+    try buffer.appendSlice(allocator, &fcnt_buf);
+    try buffer.appendSlice(allocator, f_opts);
+
+    const message = try buffer.toOwnedSlice(allocator);
+    errdefer allocator.free(message);
+
+    var b0: [16]u8 = [_]u8{0} ** 16;
+    b0[0] = 0x49;
+    @memcpy(b0[6..10], &dev_addr_le);
+    std.mem.writeInt(u32, b0[10..14], f_cnt_up, .little);
+    b0[15] = @intCast(message.len);
+
+    const cmac_input = try allocator.alloc(u8, b0.len + message.len);
+    defer allocator.free(cmac_input);
+    @memcpy(cmac_input[0..b0.len], &b0);
+    @memcpy(cmac_input[b0.len..], message);
+
+    var mac: [16]u8 = undefined;
+    std.crypto.auth.cmac.CmacAes128.create(&mac, cmac_input, &nwk_s_key);
+
+    const out = try allocator.alloc(u8, message.len + 4);
+    @memcpy(out[0..message.len], message);
+    @memcpy(out[message.len..], mac[0..4]);
+    allocator.free(message);
+    return out;
+}
+
+fn encodeJoinRequest(allocator: std.mem.Allocator, app_eui: [8]u8, dev_eui: [8]u8, dev_nonce: [2]u8, app_key: [16]u8) ![]u8 {
+    var payload = try allocator.alloc(u8, 23);
+    errdefer allocator.free(payload);
+
+    payload[0] = 0x00;
+
+    const app_eui_le = [_]u8{ app_eui[7], app_eui[6], app_eui[5], app_eui[4], app_eui[3], app_eui[2], app_eui[1], app_eui[0] };
+    const dev_eui_le = [_]u8{ dev_eui[7], dev_eui[6], dev_eui[5], dev_eui[4], dev_eui[3], dev_eui[2], dev_eui[1], dev_eui[0] };
+    @memcpy(payload[1..9], &app_eui_le);
+    @memcpy(payload[9..17], &dev_eui_le);
+    @memcpy(payload[17..19], &dev_nonce);
+
+    var mac: [16]u8 = undefined;
+    std.crypto.auth.cmac.CmacAes128.create(&mac, payload[0..19], &app_key);
+    @memcpy(payload[19..23], mac[0..4]);
+    return payload;
 }
