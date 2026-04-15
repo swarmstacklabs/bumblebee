@@ -194,35 +194,11 @@ pub const Service = struct {
                 try allocator.alloc(u8, 0);
             defer allocator.free(f_opts);
             const phy = try codec.encodeUnicast(allocator, &node, .{}, f_opts, parsed.confirmed, parsed.adr);
-            const dev_addr_hex = try state_repository.hexString(allocator, &node.dev_addr);
-            downlink = .{
-                .gateway_mac = gateway_mac,
-                .dev_addr = dev_addr_hex,
-                .gateway_tmst = rxpk.tmst,
-                .rfch = gateway.tx_rfch,
-                .freq = rxpk.freq,
-                .powe = network.gw_power,
-                .datr = cloneDataRate(allocator, rxpk.datr),
-                .codr = try allocator.dupe(u8, network.tx_codr),
-                .timing = .{ .class_a_delay_s = network.rx1_delay_s },
-                .phy_payload = phy,
-            };
+            downlink = try buildNodeDownlinkRequest(allocator, gateway_mac, gateway, network, rxpk, node, phy);
         } else if (node.pending_confirmed_downlink) |pending_phy| {
             if (node.confirmed_downlink_retries > 0) {
-                const dev_addr_hex = try state_repository.hexString(allocator, &node.dev_addr);
                 node.confirmed_downlink_retries -= 1;
-                downlink = .{
-                    .gateway_mac = gateway_mac,
-                    .dev_addr = dev_addr_hex,
-                    .gateway_tmst = rxpk.tmst,
-                    .rfch = gateway.tx_rfch,
-                    .freq = rxpk.freq,
-                    .powe = network.gw_power,
-                    .datr = cloneDataRate(allocator, rxpk.datr),
-                    .codr = try allocator.dupe(u8, network.tx_codr),
-                    .timing = .{ .class_a_delay_s = network.rx1_delay_s },
-                    .phy_payload = try allocator.dupe(u8, pending_phy),
-                };
+                downlink = try buildNodeDownlinkRequest(allocator, gateway_mac, gateway, network, rxpk, node, pending_phy);
             } else {
                 clearPendingConfirmedDownlink(allocator, &node);
             }
@@ -308,6 +284,37 @@ fn appendPendingMacCommands(allocator: std.mem.Allocator, existing: ?[]const u8,
     if (existing) |value| @memcpy(out[0..value.len], value);
     @memcpy(out[existing_len..], new);
     return out;
+}
+
+fn buildNodeDownlinkRequest(allocator: std.mem.Allocator, gateway_mac: [8]u8, gateway: types.Gateway, network: types.Network, rxpk: Rxpk, node: types.Node, phy_payload: []const u8) !packets.DownlinkRequest {
+    const dev_addr_hex = try state_repository.hexString(allocator, &node.dev_addr);
+    errdefer allocator.free(dev_addr_hex);
+
+    return .{
+        .gateway_mac = gateway_mac,
+        .dev_addr = dev_addr_hex,
+        .gateway_tmst = rxpk.tmst,
+        .rfch = gateway.tx_rfch,
+        .freq = node.rxwin_use.frequency,
+        .powe = network.gw_power,
+        .datr = try rx2DataRate(allocator, node.rxwin_use.rx2_data_rate),
+        .codr = try allocator.dupe(u8, network.tx_codr),
+        .timing = .{ .class_a_delay_s = network.rx1_delay_s + 1 },
+        .phy_payload = try allocator.dupe(u8, phy_payload),
+    };
+}
+
+fn rx2DataRate(allocator: std.mem.Allocator, data_rate: u8) !packets.DataRate {
+    const lora = switch (data_rate) {
+        0 => "SF12BW125",
+        1 => "SF11BW125",
+        2 => "SF10BW125",
+        3 => "SF9BW125",
+        4 => "SF8BW125",
+        5 => "SF7BW125",
+        else => return error.UnsupportedRx2DataRate,
+    };
+    return .{ .lora = try allocator.dupe(u8, lora) };
 }
 
 fn replacePendingConfirmedDownlink(allocator: std.mem.Allocator, node: *types.Node, phy_payload: []const u8, retries: u8) !void {
