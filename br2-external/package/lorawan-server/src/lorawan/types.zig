@@ -40,8 +40,9 @@ pub const Device = struct {
     app_key: [16]u8,
     network_name: ?[]u8,
     dev_addr_hint: ?[4]u8,
+    used_dev_nonces: []u16,
 
-    pub fn init(id: i64, name: []u8, dev_eui: [8]u8, app_eui: [8]u8, app_key: [16]u8, network_name: ?[]u8, dev_addr_hint: ?[4]u8) Device {
+    pub fn init(id: i64, name: []u8, dev_eui: [8]u8, app_eui: [8]u8, app_key: [16]u8, network_name: ?[]u8, dev_addr_hint: ?[4]u8, used_dev_nonces: []u16) Device {
         return .{
             .id = id,
             .name = name,
@@ -50,12 +51,14 @@ pub const Device = struct {
             .app_key = app_key,
             .network_name = network_name,
             .dev_addr_hint = dev_addr_hint,
+            .used_dev_nonces = used_dev_nonces,
         };
     }
 
     pub fn deinit(self: Device, allocator: std.mem.Allocator) void {
         allocator.free(self.name);
         if (self.network_name) |value| allocator.free(value);
+        allocator.free(self.used_dev_nonces);
     }
 };
 

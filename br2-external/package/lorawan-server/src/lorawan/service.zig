@@ -92,6 +92,8 @@ pub const Service = struct {
 
         if (!std.mem.eql(u8, &device.app_eui, &join.app_eui)) return null;
         if (!codec.verifyJoinRequest(rxpk.data, device.app_key)) return null;
+        const dev_nonce = std.mem.readInt(u16, &join.dev_nonce, .little);
+        if (containsDevNonce(device.used_dev_nonces, dev_nonce)) return null;
 
         var app_nonce: [3]u8 = undefined;
         std.crypto.random.bytes(&app_nonce);
@@ -99,6 +101,10 @@ pub const Service = struct {
 
         const dev_addr = device.dev_addr_hint orelse try randomDevAddr(network.net_id);
         _ = try self.state_repo.createNodeForJoin(allocator, device, network, dev_addr, session.app_s_key, session.nwk_s_key);
+        const used_dev_nonces = try appendDevNonce(allocator, device.used_dev_nonces, dev_nonce);
+        allocator.free(device.used_dev_nonces);
+        device.used_dev_nonces = used_dev_nonces;
+        try self.state_repo.upsertDevice(allocator, device);
 
         const join_accept = try codec.encodeJoinAccept(
             allocator,
@@ -268,6 +274,20 @@ fn appendPendingMacCommands(allocator: std.mem.Allocator, existing: ?[]const u8,
     const out = try allocator.alloc(u8, existing_len + new.len);
     if (existing) |value| @memcpy(out[0..value.len], value);
     @memcpy(out[existing_len..], new);
+    return out;
+}
+
+fn containsDevNonce(used_dev_nonces: []const u16, dev_nonce: u16) bool {
+    for (used_dev_nonces) |used| {
+        if (used == dev_nonce) return true;
+    }
+    return false;
+}
+
+fn appendDevNonce(allocator: std.mem.Allocator, used_dev_nonces: []const u16, dev_nonce: u16) ![]u16 {
+    const out = try allocator.alloc(u16, used_dev_nonces.len + 1);
+    @memcpy(out[0..used_dev_nonces.len], used_dev_nonces);
+    out[used_dev_nonces.len] = dev_nonce;
     return out;
 }
 

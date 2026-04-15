@@ -88,7 +88,26 @@ pub const Repository = struct {
             try parseHexArray(16, stmt.readText(4).?),
             if (jsonOptionalString(object, "network_name")) |value| try allocator.dupe(u8, value) else null,
             if (jsonOptionalString(object, "dev_addr")) |value| try parseHexArray(4, value) else null,
+            try parseUsedDevNonces(allocator, object),
         );
+    }
+
+    pub fn upsertDevice(self: Repository, allocator: std.mem.Allocator, device: types.Device) !void {
+        const device_json = try encodeDeviceJson(allocator, device);
+        defer allocator.free(device_json);
+
+        self.db.mutex.lock();
+        defer self.db.mutex.unlock();
+
+        const sql =
+            "UPDATE devices SET name = ?, device_json = ?, updated_at = CURRENT_TIMESTAMP " ++
+            "WHERE id = ?;";
+        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        defer stmt.deinit();
+        stmt.bindText(1, device.name);
+        stmt.bindText(2, device_json);
+        stmt.bindInt64(3, device.id);
+        try stmt.expectDone();
     }
 
     pub fn findNodeByDevAddr(self: Repository, allocator: std.mem.Allocator, dev_addr: [4]u8) !?types.Node {
@@ -190,6 +209,17 @@ fn encodeNodeJson(allocator: std.mem.Allocator, node: types.Node) ![]u8 {
     }, .{});
 }
 
+fn encodeDeviceJson(allocator: std.mem.Allocator, device: types.Device) ![]u8 {
+    const dev_addr = if (device.dev_addr_hint) |value| try hexString(allocator, &value) else null;
+    defer if (dev_addr) |value| allocator.free(value);
+
+    return std.json.Stringify.valueAlloc(allocator, .{
+        .network_name = device.network_name,
+        .dev_addr = dev_addr,
+        .used_dev_nonces = device.used_dev_nonces,
+    }, .{});
+}
+
 fn parseRxWindow(value: ?std.json.Value) types.RxWindowConfig {
     const root = value orelse return types.RxWindowConfig.init(0, 0, 869.525);
     if (root != .object) return types.RxWindowConfig.init(0, 0, 869.525);
@@ -217,6 +247,23 @@ fn jsonOptionalU32(object: std.json.ObjectMap, key: []const u8) ?u32 {
         .integer => |num| @intCast(num),
         else => null,
     };
+}
+
+fn parseUsedDevNonces(allocator: std.mem.Allocator, object: std.json.ObjectMap) ![]u16 {
+    const value = object.get("used_dev_nonces") orelse return allocator.alloc(u16, 0);
+    if (value != .array) return allocator.alloc(u16, 0);
+
+    const out = try allocator.alloc(u16, value.array.items.len);
+    errdefer allocator.free(out);
+
+    for (value.array.items, 0..) |item, index| {
+        out[index] = switch (item) {
+            .integer => |num| @intCast(num),
+            else => return error.InvalidJsonField,
+        };
+    }
+
+    return out;
 }
 
 fn jsonOptionalU8(object: std.json.ObjectMap, key: []const u8) ?u8 {
