@@ -7,6 +7,7 @@ const mac_command_state = @import("../mac_command_state.zig");
 const mac_command_logger_middleware = @import("../middleware/mac_command_logger.zig");
 const node_context_guard_middleware = @import("../middleware/node_context_guard.zig");
 const mac_command_validator_middleware = @import("../middleware/mac_command_validator.zig");
+const ack_correlation_middleware = @import("../middleware/ack_correlation.zig");
 const router_mod = @import("../router.zig");
 const types = @import("../types.zig");
 const runtime = @import("../runtime.zig");
@@ -30,6 +31,7 @@ const global_middlewares = [_]runtime.Middleware{
     runtime.Middleware.init("mac_command_logger", mac_command_logger_middleware.middleware),
     runtime.Middleware.init("mac_command_validator", mac_command_validator_middleware.middleware),
     runtime.Middleware.init("node_context_guard", node_context_guard_middleware.middleware),
+    runtime.Middleware.init("ack_correlation", ack_correlation_middleware.middleware),
 };
 
 const dispatcher = dispatcher_mod.Dispatcher.init(&global_middlewares, router_mod.Router.init(&routes));
@@ -130,6 +132,7 @@ fn handleDevStatusAns(ctx: *context_mod.Context) !void {
     if (state.mode != .node_update) return;
 
     const node = state.node.?;
+    if (state.correlated_pending == null) return error.InvalidMacCommandPendingState;
     const command = try ctx.currentCommand();
     node.last_battery = command.dev_status_ans.battery;
     node.last_dev_status_margin = command.dev_status_ans.margin;
@@ -141,7 +144,7 @@ fn handleAckOnly(ctx: *context_mod.Context) !void {
 
     const node = state.node.?;
     const command = try ctx.currentCommand();
-    const pending = takePendingForAnswer(state, command) orelse return;
+    const pending = state.correlated_pending orelse return error.InvalidMacCommandPendingState;
 
     switch (command) {
         .link_adr_ans => |answer| {
@@ -343,35 +346,6 @@ pub fn applyToNode(allocator: std.mem.Allocator, region: types.Region, node: *ty
     }
 
     return state.remaining_pending.toOwnedSlice(allocator);
-}
-
-fn takePendingForAnswer(state: *State, answer: commands.Command) ?commands.Command {
-    const expected = expectedPendingTag(answer) orelse return null;
-
-    while (state.pending_index < state.pending_commands.len) : (state.pending_index += 1) {
-        const pending = state.pending_commands[state.pending_index];
-        if (std.meta.activeTag(pending) == expected) {
-            state.pending_index += 1;
-            return pending;
-        }
-
-        state.remaining_pending.append(state.allocator, pending) catch unreachable;
-    }
-
-    return null;
-}
-
-fn expectedPendingTag(answer: commands.Command) ?context_mod.CommandTag {
-    return switch (answer) {
-        .link_adr_ans => .link_adr_req,
-        .duty_cycle_ans => .duty_cycle_req,
-        .rx_param_setup_ans => .rx_param_setup_req,
-        .new_channel_ans => .new_channel_req,
-        .rx_timing_setup_ans => .rx_timing_setup_req,
-        .tx_param_setup_ans => .tx_param_setup_req,
-        .dl_channel_ans => .dl_channel_req,
-        else => null,
-    };
 }
 
 fn containsCommandTag(values: []const commands.Command, tag: context_mod.CommandTag) bool {
@@ -747,6 +721,7 @@ test "mac command handlers update node state" {
         .{ .rx_param_setup_req = .{ .rx1_dr_offset = 3, .rx2_data_rate = 4, .frequency_100hz = 8695250 } },
         .{ .rx_timing_setup_req = .{ .delay = 0 } },
         .{ .tx_param_setup_req = .{ .downlink_dwell = true, .uplink_dwell = false, .max_eirp = 11 } },
+        .dev_status_req,
     }, &[_]commands.Command{
         .{ .link_adr_ans = .{ .power_ack = true, .data_rate_ack = true, .channel_mask_ack = true } },
         .duty_cycle_ans,
@@ -778,6 +753,26 @@ test "mac command handlers update node state" {
     try std.testing.expectEqual(@as(u8, 4), node.rxwin_use.rx2_data_rate);
     try std.testing.expectEqual(@as(f64, 869.525), node.rxwin_use.frequency);
     try std.testing.expectEqual(@as(usize, 0), remaining.len);
+}
+
+test "mac command handlers reject unmatched answer command" {
+    var node = types.Node.init([_]u8{ 1, 2, 3, 4 }, [_]u8{0} ** 16, [_]u8{0} ** 16, .{}, .{ .tx_power = 0, .data_rate = 0 });
+    defer node.deinit(std.testing.allocator);
+
+    try std.testing.expectError(
+        error.UnmatchedMacCommandAnswer,
+        applyToNode(
+            std.testing.allocator,
+            .eu868,
+            &node,
+            &[_]commands.Command{
+                .{ .duty_cycle_req = .{ .max_dcycle = 9 } },
+            },
+            &[_]commands.Command{
+                .{ .link_adr_ans = .{ .power_ack = true, .data_rate_ack = true, .channel_mask_ack = true } },
+            },
+        ),
+    );
 }
 
 test "mac command handlers persist channel plan state" {

@@ -21,6 +21,7 @@ pub const State = struct {
     pending_state_ready: bool = false,
     pending_index: usize = 0,
     remaining_pending: std.ArrayListUnmanaged(commands.Command) = .{},
+    correlated_pending: ?commands.Command = null,
 };
 
 pub fn requiresNode(tag: context_mod.CommandTag) bool {
@@ -54,6 +55,7 @@ pub fn requiresPendingState(tag: context_mod.CommandTag) bool {
         .link_adr_ans,
         .duty_cycle_ans,
         .rx_param_setup_ans,
+        .dev_status_ans,
         .new_channel_ans,
         .rx_timing_setup_ans,
         .tx_param_setup_ans,
