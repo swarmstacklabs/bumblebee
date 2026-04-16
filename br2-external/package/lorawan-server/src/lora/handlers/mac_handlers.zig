@@ -3,29 +3,15 @@ const std = @import("std");
 const commands = @import("../commands.zig");
 const context_mod = @import("../context.zig");
 const dispatcher_mod = @import("../dispatcher.zig");
+const mac_command_state = @import("../mac_command_state.zig");
 const mac_command_logger_middleware = @import("../middleware/mac_command_logger.zig");
+const node_context_guard_middleware = @import("../middleware/node_context_guard.zig");
 const mac_command_validator_middleware = @import("../middleware/mac_command_validator.zig");
 const router_mod = @import("../router.zig");
 const types = @import("../types.zig");
 const runtime = @import("../runtime.zig");
 
-const State = struct {
-    allocator: std.mem.Allocator,
-    mode: Mode,
-    rx_time_ms: ?i64 = null,
-    link_margin: u8 = 0,
-    gateway_count: usize = 0,
-    node: ?*types.Node = null,
-    region: ?types.Region = null,
-    pending_commands: []const commands.Command = &.{},
-    pending_index: usize = 0,
-    remaining_pending: std.ArrayListUnmanaged(commands.Command) = .{},
-};
-
-const Mode = enum {
-    response,
-    node_update,
-};
+const State = mac_command_state.State;
 
 const routes = [_]router_mod.Route{
     router_mod.Route.init(.link_check_req, handleLinkCheckReq, &.{}),
@@ -43,6 +29,7 @@ const routes = [_]router_mod.Route{
 const global_middlewares = [_]runtime.Middleware{
     runtime.Middleware.init("mac_command_logger", mac_command_logger_middleware.middleware),
     runtime.Middleware.init("mac_command_validator", mac_command_validator_middleware.middleware),
+    runtime.Middleware.init("node_context_guard", node_context_guard_middleware.middleware),
 };
 
 const dispatcher = dispatcher_mod.Dispatcher.init(&global_middlewares, router_mod.Router.init(&routes));
@@ -142,7 +129,7 @@ fn handleDevStatusAns(ctx: *context_mod.Context) !void {
     const state = ctx.data(State);
     if (state.mode != .node_update) return;
 
-    const node = state.node orelse return;
+    const node = state.node.?;
     const command = try ctx.currentCommand();
     node.last_battery = command.dev_status_ans.battery;
     node.last_dev_status_margin = command.dev_status_ans.margin;
@@ -152,7 +139,7 @@ fn handleAckOnly(ctx: *context_mod.Context) !void {
     const state = ctx.data(State);
     if (state.mode != .node_update) return;
 
-    const node = state.node orelse return;
+    const node = state.node.?;
     const command = try ctx.currentCommand();
     const pending = takePendingForAnswer(state, command) orelse return;
 
@@ -160,7 +147,7 @@ fn handleAckOnly(ctx: *context_mod.Context) !void {
         .link_adr_ans => |answer| {
             switch (pending) {
                 .link_adr_req => |request| {
-                    const region = state.region orelse types.Region.eu868;
+                    const region = state.region.?;
                     resetAdrObservations(node);
                     if (answer.power_ack and answer.data_rate_ack and answer.channel_mask_ack) {
                         node.adr_use.tx_power = @intCast(request.tx_power);
@@ -202,7 +189,7 @@ fn handleAckOnly(ctx: *context_mod.Context) !void {
         .tx_param_setup_ans => {
             switch (pending) {
                 .tx_param_setup_req => |request| {
-                    const region = state.region orelse types.Region.eu868;
+                    const region = state.region.?;
                     if (region.supportsTxParamSetup()) {
                         node.adr_use.downlink_dwell_time = request.downlink_dwell;
                         node.adr_use.uplink_dwell_time = request.uplink_dwell;
@@ -214,7 +201,7 @@ fn handleAckOnly(ctx: *context_mod.Context) !void {
         },
         .new_channel_ans => |answer| {
             switch (pending) {
-                .new_channel_req => |request| if ((state.region orelse types.Region.eu868).supportsNewChannelReq() and answer.data_rate_range_ok and answer.channel_freq_ok) {
+                .new_channel_req => |request| if (state.region.?.supportsNewChannelReq() and answer.data_rate_range_ok and answer.channel_freq_ok) {
                     try applyExtraChannel(
                         state.allocator,
                         node,
@@ -229,7 +216,7 @@ fn handleAckOnly(ctx: *context_mod.Context) !void {
         },
         .dl_channel_ans => |answer| {
             switch (pending) {
-                .dl_channel_req => |request| if ((state.region orelse types.Region.eu868).supportsDlChannelReq() and answer.uplink_freq_exists and answer.channel_freq_ok) {
+                .dl_channel_req => |request| if (state.region.?.supportsDlChannelReq() and answer.uplink_freq_exists and answer.channel_freq_ok) {
                     try applyDlChannelMapping(
                         state.allocator,
                         node,
@@ -344,6 +331,7 @@ pub fn applyToNode(allocator: std.mem.Allocator, region: types.Region, node: *ty
         .node = node,
         .region = region,
         .pending_commands = pending_commands,
+        .pending_state_ready = true,
     };
     defer state.remaining_pending.deinit(allocator);
     ctx.setUserData(&state);
@@ -609,6 +597,50 @@ test "mac command handlers reject malformed command payloads" {
         .margin = 0,
         .gateway_count = 1,
     }));
+}
+
+test "node context guard rejects node update command when node is missing" {
+    var ctx = context_mod.Context.init(std.testing.allocator);
+    defer ctx.deinit();
+
+    var state = State{
+        .allocator = std.testing.allocator,
+        .mode = .node_update,
+        .region = .eu868,
+        .pending_commands = &[_]commands.Command{
+            .{ .duty_cycle_req = .{ .max_dcycle = 9 } },
+        },
+        .pending_state_ready = true,
+    };
+    defer state.remaining_pending.deinit(std.testing.allocator);
+    ctx.setUserData(&state);
+
+    const incoming = [_]commands.Command{
+        .duty_cycle_ans,
+    };
+    try std.testing.expectError(error.MissingMacCommandNodeContext, dispatchIgnoringMissing(&ctx, &incoming));
+}
+
+test "node context guard rejects node update command when pending state is not initialized" {
+    var node = types.Node.init([_]u8{ 1, 2, 3, 4 }, [_]u8{0} ** 16, [_]u8{0} ** 16, .{}, .{ .tx_power = 0, .data_rate = 0 });
+    defer node.deinit(std.testing.allocator);
+
+    var ctx = context_mod.Context.init(std.testing.allocator);
+    defer ctx.deinit();
+
+    var state = State{
+        .allocator = std.testing.allocator,
+        .mode = .node_update,
+        .node = &node,
+        .region = .eu868,
+    };
+    defer state.remaining_pending.deinit(std.testing.allocator);
+    ctx.setUserData(&state);
+
+    const incoming = [_]commands.Command{
+        .duty_cycle_ans,
+    };
+    try std.testing.expectError(error.MissingMacCommandPendingState, dispatchIgnoringMissing(&ctx, &incoming));
 }
 
 test "mac command handlers build network-originated commands from node policy" {
