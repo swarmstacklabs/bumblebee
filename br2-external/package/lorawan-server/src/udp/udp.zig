@@ -2,6 +2,7 @@ const std = @import("std");
 const posix = std.posix;
 
 const app_mod = @import("../app.zig");
+const connectors = @import("../connectors.zig");
 const event_repository = @import("../repository/event_repository.zig");
 const logger = @import("../logger.zig");
 const lora = @import("../lora.zig");
@@ -42,6 +43,16 @@ pub const Server = struct {
         };
     }
 };
+
+fn persistAndPublishEvent(app: *App, registry: gateway_registry.Registry, event_type: []const u8, gateway_mac: [8]u8, payload_json: []const u8) !void {
+    try registry.insertEvent(event_type, gateway_mac, try app.allocator.dupe(u8, payload_json));
+    connectors.publishFromDatabase(app.allocator, app.database(), .{
+        .event_type = event_type,
+        .gateway_mac = gateway_mac,
+        .payload_json = payload_json,
+        .received_at_ms = std.time.milliTimestamp(),
+    });
+}
 
 pub fn serverMain(app: *App, runtime_config: *const Config) !void {
     const sock = try initServerSocket(runtime_config);
@@ -160,7 +171,9 @@ fn handlePushData(context: *UdpPacketContext, version: u8, token: u16) !void {
     try registry.touch(push.gateway_mac, version, &context.client_addr);
 
     for (push.rxpk.items) |rxpk| {
-        try registry.insertEvent("gateway_rxpk", push.gateway_mac, try packets.encodeNormalizedRxpk(context.server.app.allocator, push.gateway_mac, rxpk));
+        const normalized_rxpk = try packets.encodeNormalizedRxpk(context.server.app.allocator, push.gateway_mac, rxpk);
+        defer context.server.app.allocator.free(normalized_rxpk);
+        try persistAndPublishEvent(context.server.app, registry, "gateway_rxpk", push.gateway_mac, normalized_rxpk);
 
         const maybe_ingested = lorawan_service.ingestRxpk(context.server.app.allocator, push.gateway_mac, rxpk) catch |err| blk: {
             logger.warn("udp", "lorawan_ingest_failed", "failed to ingest LoRaWAN uplink", .{
@@ -173,7 +186,7 @@ fn handlePushData(context: *UdpPacketContext, version: u8, token: u16) !void {
         if (maybe_ingested) |ingested| {
             defer ingested.deinit(context.server.app.allocator);
 
-            try registry.insertEvent(ingested.event_type, push.gateway_mac, try context.server.app.allocator.dupe(u8, ingested.event_json));
+            try persistAndPublishEvent(context.server.app, registry, ingested.event_type, push.gateway_mac, ingested.event_json);
 
             if (ingested.downlink) |downlink| {
                 _ = sendDownlinkWithServer(context.server, push.gateway_mac, downlink) catch |err| {
@@ -188,7 +201,7 @@ fn handlePushData(context: *UdpPacketContext, version: u8, token: u16) !void {
     }
 
     if (push.stat) |stat| {
-        try registry.insertEvent("gateway_stat", push.gateway_mac, try context.server.app.allocator.dupe(u8, stat.json));
+        try persistAndPublishEvent(context.server.app, registry, "gateway_stat", push.gateway_mac, stat.json);
     }
 }
 
@@ -249,14 +262,16 @@ fn handleTxAck(context: *UdpPacketContext, version: u8, token: u16) !void {
 
     try registry.clearPending(ack.gateway_mac, ack.token);
 
-    try registry.insertEvent("gateway_tx_ack", ack.gateway_mac, try packets.encodeTxAckEvent(
+    const ack_event = try packets.encodeTxAckEvent(
         context.server.app.allocator,
         ack.gateway_mac,
         ack.token,
         delay_ms,
         if (maybe_pending) |pending| pending.dev_addr else null,
         status,
-    ));
+    );
+    defer context.server.app.allocator.free(ack_event);
+    try persistAndPublishEvent(context.server.app, registry, "gateway_tx_ack", ack.gateway_mac, ack_event);
 
     if (ack.error_name) |value| {
         if (!std.ascii.eqlIgnoreCase(value, "NONE")) {
@@ -1298,7 +1313,7 @@ test "queued application downlinks are delivered and set fpending until drained"
         .data => |value| value,
         else => return error.UnexpectedFrameType,
     };
-    try std.testing.expect(first_frame.pending);
+    try std.testing.expect(first_frame.f_pending);
     try std.testing.expectEqual(@as(?u8, 15), first_frame.f_port);
 
     {
@@ -1357,7 +1372,7 @@ test "queued application downlinks are delivered and set fpending until drained"
         .data => |value| value,
         else => return error.UnexpectedFrameType,
     };
-    try std.testing.expect(!second_frame.pending);
+    try std.testing.expect(!second_frame.f_pending);
     try std.testing.expectEqual(@as(?u8, 9), second_frame.f_port);
 
     {
@@ -1454,7 +1469,7 @@ test "queued application downlinks keep fpending when oversized mac commands def
         .data => |value| value,
         else => return error.UnexpectedFrameType,
     };
-    try std.testing.expect(frame.pending);
+    try std.testing.expect(frame.f_pending);
     try std.testing.expectEqual(@as(?u8, 0), frame.f_port);
     try std.testing.expectEqual(@as(usize, 0), frame.f_opts.len);
 

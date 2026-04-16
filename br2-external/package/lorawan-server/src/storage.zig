@@ -408,6 +408,25 @@ const migration_v1_sql =
 const migration_v2_sql =
     "ALTER TABLE gateway_runtime ADD COLUMN semtech_version INTEGER;";
 
+const migration_v3_sql =
+    "CREATE TABLE IF NOT EXISTS connectors (" ++
+    "id INTEGER PRIMARY KEY AUTOINCREMENT, " ++
+    "name TEXT NOT NULL UNIQUE, " ++
+    "connector_type TEXT NOT NULL, " ++
+    "uri TEXT NOT NULL, " ++
+    "enabled INTEGER NOT NULL DEFAULT 1, " ++
+    "topic TEXT, " ++
+    "exchange_name TEXT, " ++
+    "routing_key TEXT, " ++
+    "partition INTEGER NOT NULL DEFAULT 0, " ++
+    "client_id TEXT, " ++
+    "username TEXT, " ++
+    "password TEXT, " ++
+    "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, " ++
+    "updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" ++
+    ");" ++
+    "CREATE INDEX IF NOT EXISTS idx_connectors_enabled ON connectors(enabled);";
+
 const migrations = [_]Migration{
     .{
         .version = 1,
@@ -418,6 +437,11 @@ const migrations = [_]Migration{
         .version = 2,
         .name = "gateway_runtime_semtech_version",
         .sql = migration_v2_sql,
+    },
+    .{
+        .version = 3,
+        .name = "connectors_runtime_table",
+        .sql = migration_v3_sql,
     },
 };
 
