@@ -294,10 +294,14 @@ pub fn collectMacCommands(allocator: std.mem.Allocator, parsed: types.ParsedData
     return incoming.toOwnedSlice(allocator);
 }
 
-pub fn buildMacResponses(allocator: std.mem.Allocator, parsed: types.ParsedDataFrame, rx_time_ms: i64, gateway_count: usize) ![]commands.Command {
+pub fn buildMacResponses(
+    allocator: std.mem.Allocator,
+    parsed: types.ParsedDataFrame,
+    link_metrics: mac_handlers.LinkMetrics,
+) ![]commands.Command {
     const incoming = try collectMacCommands(allocator, parsed);
     defer allocator.free(incoming);
-    return mac_handlers.buildResponses(allocator, incoming, rx_time_ms, gateway_count);
+    return mac_handlers.buildResponses(allocator, incoming, link_metrics);
 }
 
 pub fn fullFCnt(previous: ?u32, next16: u16) u32 {

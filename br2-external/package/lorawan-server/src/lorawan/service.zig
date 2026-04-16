@@ -197,7 +197,7 @@ pub const Service = struct {
         updateAdrObservations(&node, parsed.adr, rxpk);
 
         var downlink: ?packets.DownlinkRequest = null;
-        const response_commands = try codec.buildMacResponses(allocator, parsed, rxTimeMs(rxpk), 1);
+        const response_commands = try codec.buildMacResponses(allocator, parsed, currentLinkMetrics(rxpk));
         defer allocator.free(response_commands);
         const pending_commands = try parsePendingCommands(allocator, node.pending_mac_commands);
         defer allocator.free(pending_commands);
@@ -296,6 +296,45 @@ fn randomDevAddr(net_id: [3]u8) ![4]u8 {
 
 fn rxTimeMs(rxpk: Rxpk) i64 {
     return rxpk.tmms orelse std.time.milliTimestamp();
+}
+
+fn currentLinkMetrics(rxpk: Rxpk) mac_handlers.LinkMetrics {
+    return .{
+        .rx_time_ms = rxTimeMs(rxpk),
+        .margin = linkCheckMargin(rxpk),
+        .gateway_count = linkCheckGatewayCount(rxpk),
+    };
+}
+
+fn linkCheckMargin(rxpk: Rxpk) u8 {
+    const lsnr = rxpk.lsnr orelse return 0;
+    const required_lsnr = requiredLinkCheckSnr(rxpk.datr) orelse return 0;
+    const margin = @max(0.0, lsnr - required_lsnr);
+    return @intFromFloat(@min(margin, @as(f64, @floatFromInt(std.math.maxInt(u8)))));
+}
+
+fn linkCheckGatewayCount(_: Rxpk) usize {
+    // The current ingest path handles one verified uplink reception at a time.
+    return 1;
+}
+
+fn requiredLinkCheckSnr(datr: packets.DataRate) ?f64 {
+    const spreading_factor = switch (datr) {
+        .lora => |value| spreadingFactorForDataRate(value) orelse return null,
+        .fsk => return null,
+    };
+    return -5.0 - 2.5 * @as(f64, @floatFromInt(spreading_factor - 6));
+}
+
+fn spreadingFactorForDataRate(datr: []const u8) ?u8 {
+    if (std.mem.eql(u8, datr, "SF12BW125")) return 12;
+    if (std.mem.eql(u8, datr, "SF11BW125")) return 11;
+    if (std.mem.eql(u8, datr, "SF10BW125")) return 10;
+    if (std.mem.eql(u8, datr, "SF9BW125")) return 9;
+    if (std.mem.eql(u8, datr, "SF8BW125")) return 8;
+    if (std.mem.eql(u8, datr, "SF7BW125")) return 7;
+    if (std.mem.eql(u8, datr, "SF7BW250")) return 7;
+    return null;
 }
 
 fn gateway_mac_hex(mac: [8]u8) [16]u8 {
@@ -534,6 +573,43 @@ fn decodePendingPhyPayload(allocator: std.mem.Allocator, pending_json: []const u
     errdefer allocator.free(out);
     try decoder.decode(out, data.string);
     return out;
+}
+
+test "current link metrics derive LinkCheckAns margin from uplink lsnr" {
+    const rxpk = packets.Rxpk{
+        .tmst = 1,
+        .freq = 868.1,
+        .datr = .{ .lora = try std.testing.allocator.dupe(u8, "SF10BW125") },
+        .codr = try std.testing.allocator.dupe(u8, "4/5"),
+        .data = try std.testing.allocator.alloc(u8, 0),
+        .time = null,
+        .tmms = 1234,
+        .rssi = -80,
+        .lsnr = 3.0,
+    };
+    defer rxpk.deinit(std.testing.allocator);
+
+    const metrics = currentLinkMetrics(rxpk);
+    try std.testing.expectEqual(@as(i64, 1234), metrics.rx_time_ms);
+    try std.testing.expectEqual(@as(u8, 15), metrics.margin);
+    try std.testing.expectEqual(@as(usize, 1), metrics.gateway_count);
+}
+
+test "link check margin falls back to zero when data rate has no LoRa SNR floor" {
+    const rxpk = packets.Rxpk{
+        .tmst = 1,
+        .freq = 868.1,
+        .datr = .{ .fsk = 50000 },
+        .codr = try std.testing.allocator.dupe(u8, "4/5"),
+        .data = try std.testing.allocator.alloc(u8, 0),
+        .time = null,
+        .tmms = null,
+        .rssi = -80,
+        .lsnr = 12.0,
+    };
+    defer rxpk.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(@as(u8, 0), linkCheckMargin(rxpk));
 }
 
 test "class A window respects node rx1 delay override" {

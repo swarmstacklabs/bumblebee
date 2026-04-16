@@ -10,6 +10,7 @@ const State = struct {
     allocator: std.mem.Allocator,
     mode: Mode,
     rx_time_ms: i64 = 0,
+    link_margin: u8 = 0,
     gateway_count: usize = 0,
     node: ?*types.Node = null,
     pending_commands: []const commands.Command = &.{},
@@ -39,15 +40,22 @@ const dispatcher = dispatcher_mod.Dispatcher.init(&.{}, router_mod.Router.init(&
 const adr_required_observations: u16 = 20;
 const adr_max_data_rate: u8 = 5;
 
-pub fn buildResponses(allocator: std.mem.Allocator, incoming: []const commands.Command, rx_time_ms: i64, gateway_count: usize) ![]commands.Command {
+pub const LinkMetrics = struct {
+    rx_time_ms: i64 = 0,
+    margin: u8 = 0,
+    gateway_count: usize = 0,
+};
+
+pub fn buildResponses(allocator: std.mem.Allocator, incoming: []const commands.Command, link_metrics: LinkMetrics) ![]commands.Command {
     var ctx = context_mod.Context.init(allocator);
     defer ctx.deinit();
 
     var state = State{
         .allocator = allocator,
         .mode = .response,
-        .rx_time_ms = rx_time_ms,
-        .gateway_count = gateway_count,
+        .rx_time_ms = link_metrics.rx_time_ms,
+        .link_margin = link_metrics.margin,
+        .gateway_count = link_metrics.gateway_count,
     };
     ctx.setUserData(&state);
 
@@ -103,7 +111,7 @@ fn handleLinkCheckReq(ctx: *context_mod.Context) !void {
     if (state.mode != .response) return;
 
     try ctx.appendResponse(.{ .link_check_ans = .{
-        .margin = 0,
+        .margin = linkMetricsMargin(state),
         .gateway_count = @intCast(@min(state.gateway_count, std.math.maxInt(u8))),
     } });
 }
@@ -527,6 +535,10 @@ fn orderedRemove(comptime T: type, values: []T, index: usize) []T {
     return values[0 .. values.len - 1];
 }
 
+fn linkMetricsMargin(state: *const State) u8 {
+    return state.link_margin;
+}
+
 test "mac command handlers build responses via dispatcher" {
     const incoming = [_]commands.Command{
         .link_check_req,
@@ -534,11 +546,16 @@ test "mac command handlers build responses via dispatcher" {
         .duty_cycle_ans,
     };
 
-    const response = try buildResponses(std.testing.allocator, &incoming, 1234, 3);
+    const response = try buildResponses(std.testing.allocator, &incoming, .{
+        .rx_time_ms = 1234,
+        .margin = 17,
+        .gateway_count = 3,
+    });
     defer std.testing.allocator.free(response);
 
     try std.testing.expectEqual(@as(usize, 2), response.len);
     try std.testing.expect(response[0] == .link_check_ans);
+    try std.testing.expectEqual(@as(u8, 17), response[0].link_check_ans.margin);
     try std.testing.expectEqual(@as(u8, 3), response[0].link_check_ans.gateway_count);
     try std.testing.expect(response[1] == .device_time_ans);
     try std.testing.expectEqual(@as(i64, 1234), response[1].device_time_ans.milliseconds_since_epoch);
