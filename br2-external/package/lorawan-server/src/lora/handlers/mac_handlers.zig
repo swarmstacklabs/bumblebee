@@ -3,8 +3,11 @@ const std = @import("std");
 const commands = @import("../commands.zig");
 const context_mod = @import("../context.zig");
 const dispatcher_mod = @import("../dispatcher.zig");
+const mac_command_logger_middleware = @import("../middleware/mac_command_logger.zig");
+const mac_command_validator_middleware = @import("../middleware/mac_command_validator.zig");
 const router_mod = @import("../router.zig");
 const types = @import("../types.zig");
+const runtime = @import("../runtime.zig");
 
 const State = struct {
     allocator: std.mem.Allocator,
@@ -37,7 +40,12 @@ const routes = [_]router_mod.Route{
     router_mod.Route.init(.dl_channel_ans, handleAckOnly, &.{}),
 };
 
-const dispatcher = dispatcher_mod.Dispatcher.init(&.{}, router_mod.Router.init(&routes));
+const global_middlewares = [_]runtime.Middleware{
+    runtime.Middleware.init("mac_command_logger", mac_command_logger_middleware.middleware),
+    runtime.Middleware.init("mac_command_validator", mac_command_validator_middleware.middleware),
+};
+
+const dispatcher = dispatcher_mod.Dispatcher.init(&global_middlewares, router_mod.Router.init(&routes));
 const adr_required_observations: u16 = 20;
 
 pub const LinkMetrics = struct {
@@ -589,6 +597,18 @@ test "mac command handlers skip device time response without GPS-synced rx time"
 
     try std.testing.expectEqual(@as(usize, 1), response.len);
     try std.testing.expect(response[0] == .link_check_ans);
+}
+
+test "mac command handlers reject malformed command payloads" {
+    const incoming = [_]commands.Command{
+        .{ .dev_status_ans = .{ .battery = 255, .margin = 32 } },
+    };
+
+    try std.testing.expectError(error.MalformedMacCommandPayload, buildResponses(std.testing.allocator, &incoming, .{
+        .rx_time_ms = null,
+        .margin = 0,
+        .gateway_count = 1,
+    }));
 }
 
 test "mac command handlers build network-originated commands from node policy" {

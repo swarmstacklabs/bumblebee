@@ -488,3 +488,14 @@ The following should be explicitly refused if they appear during implementation 
 - Prometheus and cluster support
 - reproducing Erlang supervision trees exactly
 - reproducing every Mnesia table and every admin endpoint
+
+## Middleware
+
+Good middleware to add next to mac_command_logger:
+
+command_validator: reject malformed/unsupported command payloads early
+node_context_guard: ensure required node/region/pending state exists before handler runs
+ack_correlation: validate *_ans commands match expected pending *_req
+metrics_collector: count per-command success/failure/latency
+idempotency_or_replay_guard: prevent duplicate processing of repeated uplink command sets
+error_mapper: normalize low-level errors into consistent app-level errors/log fields
