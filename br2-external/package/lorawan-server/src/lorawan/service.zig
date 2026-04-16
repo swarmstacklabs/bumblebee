@@ -211,12 +211,13 @@ pub const Service = struct {
         const outgoing_commands = try appendCommands(allocator, response_commands, network_commands);
         defer allocator.free(outgoing_commands);
         const queued_application = node.nextQueuedApplicationDownlink();
+        const has_queued_application = queued_application != null;
 
-        if (outgoing_commands.len > 0 or parsed.confirmed or queued_application != null) {
+        if (outgoing_commands.len > 0 or parsed.confirmed or has_queued_application) {
             const tx_data = if (queued_application != null and outgoing_commands.len <= 15)
                 queued_application.?
             else
-                types.TxData.init(false, null, "", false);
+                types.TxData.init(false, null, "", has_queued_application);
             const f_opts = if (outgoing_commands.len > 0)
                 try commands.encodeFOpts(allocator, outgoing_commands)
             else

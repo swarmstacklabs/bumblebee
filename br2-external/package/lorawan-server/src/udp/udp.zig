@@ -1329,6 +1329,101 @@ test "queued application downlinks are delivered and set fpending until drained"
     }
 }
 
+test "queued application downlinks keep fpending when oversized mac commands defer payload" {
+    const allocator = std.testing.allocator;
+    var harness = try TestHarness.init(allocator);
+    defer harness.deinit();
+    var server = harness.server();
+
+    const fixture = ForwarderFixture{};
+    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
+    try seedNode(
+        harness.app.database(),
+        [_]u8{ 0x01, 0x02, 0x03, 0x04 },
+        [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F },
+        [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F },
+    );
+    try seedApplicationQueue(harness.app.database(), [_]u8{ 0x01, 0x02, 0x03, 0x04 });
+
+    const request_fopts = try lorawan.commands.encodeFOpts(allocator, &[_]lorawan.commands.Command{
+        .{ .link_adr_req = .{ .data_rate = 5, .tx_power = 7, .channel_mask = 0x00FF, .ch_mask_cntl = 0, .nb_rep = 1 } },
+        .{ .link_adr_req = .{ .data_rate = 5, .tx_power = 6, .channel_mask = 0x0F0F, .ch_mask_cntl = 0, .nb_rep = 1 } },
+        .{ .link_adr_req = .{ .data_rate = 4, .tx_power = 5, .channel_mask = 0xF0F0, .ch_mask_cntl = 0, .nb_rep = 1 } },
+        .{ .link_adr_req = .{ .data_rate = 3, .tx_power = 4, .channel_mask = 0xAAAA, .ch_mask_cntl = 0, .nb_rep = 1 } },
+    });
+    defer allocator.free(request_fopts);
+    try std.testing.expect(request_fopts.len > 15);
+
+    {
+        const repo = state_repository.Repository.init(harness.app.database());
+        var node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
+        defer node.deinit(allocator);
+
+        node.pending_mac_commands = try allocator.dupe(u8, request_fopts);
+        try repo.upsertNode(allocator, node);
+    }
+
+    try harness.sendFromClient(&fixture.pullData(0x0001));
+    try drainReady(&server);
+    const pull_ack = try harness.recvOnClient();
+    defer allocator.free(pull_ack);
+
+    const nwk_s_key = [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F };
+    const uplink_phy = try encodeDataUplink(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 }, nwk_s_key, 1, &[_]u8{});
+    defer allocator.free(uplink_phy);
+    const uplink_b64 = try encodeBase64Alloc(allocator, uplink_phy);
+    defer allocator.free(uplink_b64);
+    const rxpk_json = try fixture.rxpkPayloadJson(allocator, uplink_b64, 403);
+    defer allocator.free(rxpk_json);
+    const push_data = try fixture.pushDataWithJson(allocator, 0x5353, rxpk_json);
+    defer allocator.free(push_data);
+
+    try harness.sendFromClient(push_data);
+    try drainReady(&server);
+
+    const push_ack = try harness.recvOnClient();
+    defer allocator.free(push_ack);
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        packets.semtech_version,
+        0x53,
+        0x53,
+        packets.push_ack_ident,
+    }, push_ack);
+
+    const pull_resp = try harness.recvOnClient();
+    defer allocator.free(pull_resp);
+    const downlink_phy = try extractPullRespPhyPayload(allocator, pull_resp[4..]);
+    defer allocator.free(downlink_phy);
+    const decoded = try lorawan.codec.decodeFrame(downlink_phy);
+    const frame = switch (decoded) {
+        .data => |value| value,
+        else => return error.UnexpectedFrameType,
+    };
+    try std.testing.expect(frame.pending);
+    try std.testing.expectEqual(@as(?u8, 0), frame.f_port);
+    try std.testing.expectEqual(@as(usize, 0), frame.f_opts.len);
+
+    {
+        const repo = state_repository.Repository.init(harness.app.database());
+        const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
+        defer node.deinit(allocator);
+        try std.testing.expectEqual(@as(usize, 2), node.application_downlink_queue.?.len);
+    }
+
+    const token = std.mem.readInt(u16, pull_resp[1..3], .big);
+    const tx_ack = try fixture.txAck(allocator, token, "NONE");
+    defer allocator.free(tx_ack);
+    try harness.sendFromClient(tx_ack);
+    try drainReady(&server);
+
+    {
+        const repo = state_repository.Repository.init(harness.app.database());
+        const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
+        defer node.deinit(allocator);
+        try std.testing.expectEqual(@as(usize, 2), node.application_downlink_queue.?.len);
+    }
+}
+
 test "node downlinks prefer RX1 scheduling when uplink state supports it" {
     const allocator = std.testing.allocator;
     var harness = try TestHarness.init(allocator);
