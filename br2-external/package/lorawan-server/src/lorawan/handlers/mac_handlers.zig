@@ -36,6 +36,8 @@ const routes = [_]router_mod.Route{
 };
 
 const dispatcher = dispatcher_mod.Dispatcher.init(&.{}, router_mod.Router.init(&routes));
+const adr_required_observations: u16 = 20;
+const adr_max_data_rate: u8 = 5;
 
 pub fn buildResponses(allocator: std.mem.Allocator, incoming: []const commands.Command, rx_time_ms: i64, gateway_count: usize) ![]commands.Command {
     var ctx = context_mod.Context.init(allocator);
@@ -62,6 +64,10 @@ pub fn buildNetworkCommands(
 ) ![]commands.Command {
     var out = std.ArrayList(commands.Command){};
     errdefer out.deinit(allocator);
+
+    if (buildAdrCommand(node, pending_commands)) |command| {
+        try out.append(allocator, command);
+    }
 
     if ((node.last_battery == null or node.last_dev_status_margin == null) and !containsCommandTag(pending_commands, .dev_status_req)) {
         try out.append(allocator, .dev_status_req);
@@ -132,10 +138,13 @@ fn handleAckOnly(ctx: *context_mod.Context) !void {
     switch (command) {
         .link_adr_ans => |answer| {
             switch (pending) {
-                .link_adr_req => |request| if (answer.power_ack and answer.data_rate_ack and answer.channel_mask_ack) {
-                    node.adr_use.tx_power = @intCast(request.tx_power);
-                    node.adr_use.data_rate = request.data_rate;
-                    try applyChannelMaskState(state.allocator, node, request.ch_mask_cntl, request.channel_mask);
+                .link_adr_req => |request| {
+                    resetAdrObservations(node);
+                    if (answer.power_ack and answer.data_rate_ack and answer.channel_mask_ack) {
+                        node.adr_use.tx_power = @intCast(request.tx_power);
+                        node.adr_use.data_rate = request.data_rate;
+                        try applyChannelMaskState(state.allocator, node, request.ch_mask_cntl, request.channel_mask);
+                    }
                 },
                 else => {},
             }
@@ -206,6 +215,95 @@ fn handleAckOnly(ctx: *context_mod.Context) !void {
         },
         else => {},
     }
+}
+
+fn buildAdrCommand(node: types.Node, pending_commands: []const commands.Command) ?commands.Command {
+    if (containsCommandTag(pending_commands, .link_adr_req)) return null;
+    if (node.adr_observation_count < adr_required_observations) return null;
+
+    const current_data_rate = node.adr_last_data_rate orelse return null;
+    const average_lsnr = node.adr_average_lsnr orelse return null;
+    const desired_data_rate = desiredAdrDataRate(current_data_rate, average_lsnr);
+    const desired_tx_power = clampTxPowerIndex(node.adr_use.tx_power);
+    const desired_channel_mask = desiredAdrChannelMask(node);
+    const current_channel_mask = currentAdrChannelMask(node);
+
+    if (desired_data_rate == node.adr_use.data_rate and
+        desired_tx_power == clampTxPowerIndex(node.adr_use.tx_power) and
+        desired_channel_mask == current_channel_mask)
+    {
+        return null;
+    }
+
+    return .{ .link_adr_req = .{
+        .data_rate = desired_data_rate,
+        .tx_power = desired_tx_power,
+        .channel_mask = desired_channel_mask,
+        .ch_mask_cntl = 0,
+        .nb_rep = 1,
+    } };
+}
+
+fn desiredAdrDataRate(current_data_rate: u8, average_lsnr: f64) u8 {
+    const current_sf = spreadingFactorForDataRate(current_data_rate) orelse return current_data_rate;
+    const max_snr = -5.0 - 2.5 * @as(f64, @floatFromInt(current_sf - 6));
+    const steps_float = (average_lsnr - (max_snr + 10.0)) / 3.0;
+    const steps: i32 = @intFromFloat(@floor(steps_float));
+    if (steps <= 0) return current_data_rate;
+
+    const increased: i32 = @as(i32, current_data_rate) + steps;
+    return @intCast(@min(increased, adr_max_data_rate));
+}
+
+fn spreadingFactorForDataRate(data_rate: u8) ?u8 {
+    return switch (data_rate) {
+        0 => 12,
+        1 => 11,
+        2 => 10,
+        3 => 9,
+        4 => 8,
+        5, 6 => 7,
+        else => null,
+    };
+}
+
+fn clampTxPowerIndex(tx_power: i32) u8 {
+    return @intCast(std.math.clamp(tx_power, 0, 15));
+}
+
+fn desiredAdrChannelMask(node: types.Node) u16 {
+    if (node.enabled_channels) |channels| {
+        var mask: u16 = 0;
+        for (channels) |channel| {
+            if (channel >= 16) continue;
+            mask |= @as(u16, 1) << @intCast(channel);
+        }
+        if (mask != 0) return mask;
+    }
+
+    if (node.channel_masks) |masks| {
+        for (masks) |entry| {
+            if (entry.control == 0 and entry.mask != 0) return entry.mask;
+        }
+    }
+
+    return 0x0007;
+}
+
+fn currentAdrChannelMask(node: types.Node) u16 {
+    if (node.channel_masks) |masks| {
+        for (masks) |entry| {
+            if (entry.control == 0) return entry.mask;
+        }
+    }
+
+    return desiredAdrChannelMask(node);
+}
+
+fn resetAdrObservations(node: *types.Node) void {
+    node.adr_observation_count = 0;
+    node.adr_average_rssi = null;
+    node.adr_average_lsnr = null;
 }
 
 pub fn applyToNode(allocator: std.mem.Allocator, node: *types.Node, pending_commands: []const commands.Command, incoming: []const commands.Command) ![]commands.Command {
@@ -490,9 +588,55 @@ test "mac command handlers skip already pending network-originated commands" {
     try std.testing.expectEqual(@as(usize, 0), generated.len);
 }
 
+test "mac command handlers emit adr request after enough high-margin observations" {
+    var node = types.Node.init([_]u8{ 1, 2, 3, 4 }, [_]u8{0} ** 16, [_]u8{0} ** 16, .{}, .{ .tx_power = 2, .data_rate = 2 });
+    defer node.deinit(std.testing.allocator);
+    node.adr_observation_count = adr_required_observations;
+    node.adr_average_lsnr = 8.0;
+    node.adr_last_data_rate = 2;
+
+    const generated = try buildNetworkCommands(
+        std.testing.allocator,
+        node,
+        .{},
+        1,
+        &.{},
+    );
+    defer std.testing.allocator.free(generated);
+
+    try std.testing.expectEqual(@as(usize, 2), generated.len);
+    try std.testing.expect(generated[0] == .link_adr_req);
+    try std.testing.expectEqual(@as(u8, 5), generated[0].link_adr_req.data_rate);
+    try std.testing.expectEqual(@as(u8, 2), generated[0].link_adr_req.tx_power);
+    try std.testing.expectEqual(@as(u16, 0x0007), generated[0].link_adr_req.channel_mask);
+}
+
+test "mac command handlers do not emit adr request before observation threshold" {
+    var node = types.Node.init([_]u8{ 1, 2, 3, 4 }, [_]u8{0} ** 16, [_]u8{0} ** 16, .{}, .{ .tx_power = 2, .data_rate = 2 });
+    defer node.deinit(std.testing.allocator);
+    node.adr_observation_count = adr_required_observations - 1;
+    node.adr_average_lsnr = 8.0;
+    node.adr_last_data_rate = 2;
+
+    const generated = try buildNetworkCommands(
+        std.testing.allocator,
+        node,
+        .{},
+        1,
+        &.{},
+    );
+    defer std.testing.allocator.free(generated);
+
+    try std.testing.expectEqual(@as(usize, 1), generated.len);
+    try std.testing.expect(generated[0] == .dev_status_req);
+}
+
 test "mac command handlers update node state" {
     var node = types.Node.init([_]u8{ 1, 2, 3, 4 }, [_]u8{0} ** 16, [_]u8{0} ** 16, .{}, .{ .tx_power = 0, .data_rate = 0 });
     defer node.deinit(std.testing.allocator);
+    node.adr_observation_count = adr_required_observations;
+    node.adr_average_rssi = -80.0;
+    node.adr_average_lsnr = 5.0;
 
     const remaining = try applyToNode(std.testing.allocator, &node, &[_]commands.Command{
         .{ .link_adr_req = .{ .data_rate = 5, .tx_power = 7, .channel_mask = 0x00FF, .ch_mask_cntl = 0, .nb_rep = 1 } },
@@ -515,6 +659,9 @@ test "mac command handlers update node state" {
     try std.testing.expectEqual(@as(?i8, -2), node.last_dev_status_margin);
     try std.testing.expectEqual(@as(i32, 7), node.adr_use.tx_power);
     try std.testing.expectEqual(@as(u8, 5), node.adr_use.data_rate);
+    try std.testing.expectEqual(@as(u16, 0), node.adr_observation_count);
+    try std.testing.expectEqual(@as(?f64, null), node.adr_average_rssi);
+    try std.testing.expectEqual(@as(?f64, null), node.adr_average_lsnr);
     try std.testing.expectEqual(@as(?u8, 9), node.adr_use.max_dcycle);
     try std.testing.expectEqual(@as(?bool, true), node.adr_use.downlink_dwell_time);
     try std.testing.expectEqual(@as(?bool, false), node.adr_use.uplink_dwell_time);

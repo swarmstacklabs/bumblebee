@@ -194,6 +194,7 @@ pub const Service = struct {
 
         node.f_cnt_up = parsed.f_cnt;
         if (parsed.ack) clearPendingConfirmedDownlink(allocator, &node);
+        updateAdrObservations(&node, parsed.adr, rxpk);
 
         var downlink: ?packets.DownlinkRequest = null;
         const response_commands = try codec.buildMacResponses(allocator, parsed, rxTimeMs(rxpk), 1);
@@ -444,6 +445,51 @@ fn clearPendingConfirmedDownlink(allocator: std.mem.Allocator, node: *types.Node
         node.pending_confirmed_downlink = null;
     }
     node.confirmed_downlink_retries = 0;
+}
+
+fn updateAdrObservations(node: *types.Node, adr_enabled: bool, rxpk: Rxpk) void {
+    if (!adr_enabled) {
+        resetAdrObservationState(node);
+        node.adr_last_data_rate = null;
+        return;
+    }
+
+    const data_rate = switch (rxpk.datr) {
+        .lora => |value| loraDataRateIndex(value) catch null,
+        .fsk => null,
+    } orelse {
+        resetAdrObservationState(node);
+        node.adr_last_data_rate = null;
+        return;
+    };
+
+    if (node.adr_last_data_rate == null or node.adr_last_data_rate.? != data_rate) {
+        resetAdrObservationState(node);
+    }
+    node.adr_last_data_rate = data_rate;
+
+    if (rxpk.rssi) |rssi| {
+        node.adr_average_rssi = nextAverage(node.adr_average_rssi, node.adr_observation_count, rssi);
+    }
+    if (rxpk.lsnr) |lsnr| {
+        node.adr_average_lsnr = nextAverage(node.adr_average_lsnr, node.adr_observation_count, lsnr);
+    }
+
+    if (node.adr_observation_count < std.math.maxInt(u16)) {
+        node.adr_observation_count += 1;
+    }
+}
+
+fn resetAdrObservationState(node: *types.Node) void {
+    node.adr_observation_count = 0;
+    node.adr_average_rssi = null;
+    node.adr_average_lsnr = null;
+}
+
+fn nextAverage(current: ?f64, sample_count: u16, sample: f64) f64 {
+    if (current == null or sample_count == 0) return sample;
+    const count = @as(f64, @floatFromInt(sample_count));
+    return ((current.? * count) + sample) / (count + 1.0);
 }
 
 fn containsDevNonce(used_dev_nonces: []const u16, dev_nonce: u16) bool {
