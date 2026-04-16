@@ -545,6 +545,61 @@ test "join requests load registered devices from storage and create a node" {
     try std.testing.expectEqual(@as(?u32, null), node.f_cnt_up);
 }
 
+test "join accepts include cflist from network configuration" {
+    const allocator = std.testing.allocator;
+    var harness = try TestHarness.init(allocator);
+    defer harness.deinit();
+    var server = harness.server();
+
+    const fixture = ForwarderFixture{};
+    try seedGatewayNetworkWithJson(
+        harness.app.database(),
+        fixture.gateway_mac,
+        "{\"netid\":\"000013\",\"tx_codr\":\"4/5\",\"join1_delay\":5,\"rx1_delay\":1,\"gw_power\":14,\"rxwin_init\":{\"rx1_dr_offset\":0,\"rx2_data_rate\":0,\"frequency\":869.525},\"cflist\":[{\"freq\":867.1},{\"freq\":867.3}]}",
+    );
+    try seedDevice(harness.app.database(), "node-a", "1112131415161718", "0102030405060708", "2b7e151628aed2a6abf7158809cf4f3c", "public", "26011bda");
+
+    try harness.sendFromClient(&fixture.pullData(0x0001));
+    try drainReady(&server);
+    const pull_ack = try harness.recvOnClient();
+    defer allocator.free(pull_ack);
+
+    const join_payload = try encodeJoinRequest(
+        allocator,
+        [_]u8{ 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08 },
+        [_]u8{ 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18 },
+        [_]u8{ 0xAA, 0xBB },
+        [_]u8{ 0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6, 0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C },
+    );
+    defer allocator.free(join_payload);
+    const join_b64 = try encodeBase64Alloc(allocator, join_payload);
+    defer allocator.free(join_b64);
+    const rxpk_json = try fixture.rxpkPayloadJson(allocator, join_b64, 42);
+    defer allocator.free(rxpk_json);
+    const push_data = try fixture.pushDataWithJson(allocator, 0x1200, rxpk_json);
+    defer allocator.free(push_data);
+
+    try harness.sendFromClient(push_data);
+    try drainReady(&server);
+
+    const push_ack = try harness.recvOnClient();
+    defer allocator.free(push_ack);
+    try std.testing.expectEqualSlices(u8, &[_]u8{
+        packets.semtech_version,
+        0x12,
+        0x00,
+        packets.push_ack_ident,
+    }, push_ack);
+
+    const pull_resp = try harness.recvOnClient();
+    defer allocator.free(pull_resp);
+    try std.testing.expectEqual(@as(u8, packets.pull_resp_ident), pull_resp[3]);
+
+    const phy_payload = try extractPullRespPhyPayload(allocator, pull_resp[4..]);
+    defer allocator.free(phy_payload);
+    try std.testing.expectEqual(@as(usize, 33), phy_payload.len);
+}
+
 test "tx ack persists pending mac commands and later uplink syncs node state" {
     const allocator = std.testing.allocator;
     var harness = try TestHarness.init(allocator);
@@ -1759,11 +1814,19 @@ fn expectPullRespSettings(allocator: std.mem.Allocator, json_payload: []const u8
 }
 
 fn seedGatewayNetwork(db: app_mod.Database, gateway_mac: [8]u8) !void {
+    return seedGatewayNetworkWithJson(
+        db,
+        gateway_mac,
+        "{\"netid\":\"000013\",\"tx_codr\":\"4/5\",\"join1_delay\":5,\"rx1_delay\":1,\"gw_power\":14,\"rxwin_init\":{\"rx1_dr_offset\":0,\"rx2_data_rate\":0,\"frequency\":869.525}}",
+    );
+}
+
+fn seedGatewayNetworkWithJson(db: app_mod.Database, gateway_mac: [8]u8, network_json: []const u8) !void {
     const gateway_hex = packets.gatewayMacHex(gateway_mac);
     const network_stmt = try storage.Statement.prepare(db.conn, "INSERT INTO networks(name, network_json) VALUES(?, ?);");
     defer network_stmt.deinit();
     network_stmt.bindText(1, "public");
-    network_stmt.bindText(2, "{\"netid\":\"000013\",\"tx_codr\":\"4/5\",\"join1_delay\":5,\"rx1_delay\":1,\"gw_power\":14,\"rxwin_init\":{\"rx1_dr_offset\":0,\"rx2_data_rate\":0,\"frequency\":869.525}}");
+    network_stmt.bindText(2, network_json);
     try network_stmt.expectDone();
 
     const gateway_stmt = try storage.Statement.prepare(db.conn, "INSERT INTO gateways(mac, name, network_name, gateway_json) VALUES(?, ?, ?, ?);");

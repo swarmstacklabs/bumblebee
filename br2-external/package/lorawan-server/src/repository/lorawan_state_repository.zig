@@ -59,6 +59,7 @@ pub const Repository = struct {
             jsonOptionalU32(object, "rx1_delay") orelse 1,
             jsonOptionalI32(object, "gw_power") orelse 14,
             parseRxWindow(object.get("rxwin_init")),
+            try parseCfList(allocator, object.get("cflist")),
         );
     }
 
@@ -402,6 +403,36 @@ fn parseDlChannelMap(allocator: std.mem.Allocator, value: ?std.json.Value) !?[]t
 
     if (out.items.len == 0) return null;
     return try out.toOwnedSlice(allocator);
+}
+
+fn parseCfList(allocator: std.mem.Allocator, value: ?std.json.Value) !?[]u32 {
+    const root = value orelse return null;
+    if (root != .array) return null;
+
+    var out = std.ArrayListUnmanaged(u32){};
+    defer out.deinit(allocator);
+
+    for (root.array.items) |item| {
+        const freq_mhz = switch (item) {
+            .object => jsonOptionalF64(item.object, "freq"),
+            .float => |num| num,
+            .integer => |num| @as(f64, @floatFromInt(num)),
+            else => null,
+        } orelse continue;
+
+        if (freq_mhz <= 0) return error.InvalidJsonField;
+        const freq_100hz = freq100HzFromMHz(freq_mhz);
+        if (freq_100hz > 0xFF_FFFF) return error.InvalidJsonField;
+        try out.append(allocator, freq_100hz);
+    }
+
+    if (out.items.len == 0) return null;
+    if (out.items.len > 5) return error.InvalidJsonField;
+    return try out.toOwnedSlice(allocator);
+}
+
+fn freq100HzFromMHz(freq_mhz: f64) u32 {
+    return @intFromFloat(@round(freq_mhz * 10_000.0));
 }
 
 fn jsonRequiredString(object: std.json.ObjectMap, key: []const u8) ![]const u8 {

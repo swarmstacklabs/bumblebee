@@ -137,7 +137,7 @@ pub const Service = struct {
             network.rxwin_init.rx1_dr_offset,
             network.rxwin_init.rx2_data_rate,
             @intCast(network.rx1_delay_s),
-            null,
+            network.cf_list_100hz,
         );
 
         const dev_addr_hex = try state_repository.hexString(allocator, &dev_addr);
@@ -621,6 +621,7 @@ test "class A window respects node rx1 delay override" {
         1,
         14,
         .{},
+        null,
     );
     defer network.deinit(std.testing.allocator);
 
@@ -656,6 +657,7 @@ test "class A rx2 fallback uses overridden rx1 delay plus one second" {
         1,
         14,
         .{},
+        null,
     );
     defer network.deinit(std.testing.allocator);
 

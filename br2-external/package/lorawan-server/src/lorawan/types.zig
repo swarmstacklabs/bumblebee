@@ -126,8 +126,9 @@ pub const Network = struct {
     rx1_delay_s: u32,
     gw_power: i32,
     rxwin_init: RxWindowConfig,
+    cf_list_100hz: ?[]u32,
 
-    pub fn init(name: []u8, net_id: [3]u8, tx_codr: []u8, join1_delay_s: u32, rx1_delay_s: u32, gw_power: i32, rxwin_init: RxWindowConfig) Network {
+    pub fn init(name: []u8, net_id: [3]u8, tx_codr: []u8, join1_delay_s: u32, rx1_delay_s: u32, gw_power: i32, rxwin_init: RxWindowConfig, cf_list_100hz: ?[]u32) Network {
         return .{
             .name = name,
             .net_id = net_id,
@@ -136,12 +137,14 @@ pub const Network = struct {
             .rx1_delay_s = rx1_delay_s,
             .gw_power = gw_power,
             .rxwin_init = rxwin_init,
+            .cf_list_100hz = cf_list_100hz,
         };
     }
 
     pub fn deinit(self: Network, allocator: std.mem.Allocator) void {
         allocator.free(self.name);
         allocator.free(self.tx_codr);
+        if (self.cf_list_100hz) |value| allocator.free(value);
     }
 };
 

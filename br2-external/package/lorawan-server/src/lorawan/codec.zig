@@ -129,9 +129,9 @@ pub fn encodeJoinAccept(allocator: std.mem.Allocator, app_key: [16]u8, app_nonce
             buffer[index + 2] = @intCast((freq >> 16) & 0xFF);
             index += 3;
         }
-        while ((index - 1) < 28) : (index += 1) buffer[index] = 0;
+        while (index < 28) : (index += 1) buffer[index] = 0;
+        buffer[index] = 0;
         index += 1;
-        buffer[index - 1] = 0;
     }
 
     var mac: [16]u8 = undefined;
