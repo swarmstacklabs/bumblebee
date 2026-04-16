@@ -1,6 +1,6 @@
 const std = @import("std");
 const logger = @import("logger.zig");
-const pending_downlinks = @import("lorawan/pending_downlinks.zig");
+const pending_downlinks = @import("lora/pending_downlinks.zig");
 
 pub const c = @cImport({
     @cInclude("sqlite3.h");

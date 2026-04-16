@@ -4,15 +4,15 @@ const posix = std.posix;
 const app_mod = @import("../app.zig");
 const event_repository = @import("../repository/event_repository.zig");
 const logger = @import("../logger.zig");
-const lorawan = @import("../lorawan.zig");
+const lora = @import("../lora.zig");
 const storage = @import("../storage.zig");
 const udp_transport = @import("transport.zig");
 const App = app_mod.App;
 const Config = app_mod.Config;
-const state_repository = lorawan.state_repository;
-const gateway_registry = lorawan.gateway_registry;
-const pending_downlinks = lorawan.pending_downlinks;
-const packets = lorawan.packets;
+const state_repository = lora.state_repository;
+const gateway_registry = lora.gateway_registry;
+const pending_downlinks = lora.pending_downlinks;
+const packets = lora.packets;
 
 const UdpPacketContext = struct {
     server: *Server,
@@ -156,7 +156,7 @@ fn handlePushData(context: *UdpPacketContext, version: u8, token: u16) !void {
     };
 
     const registry = gateway_registry.Registry.init(context.server.app.database());
-    const lorawan_service = lorawan.service.Service.init(context.server.app.database());
+    const lorawan_service = lora.service.Service.init(context.server.app.database());
     try registry.touch(push.gateway_mac, version, &context.client_addr);
 
     for (push.rxpk.items) |rxpk| {
@@ -243,7 +243,7 @@ fn handleTxAck(context: *UdpPacketContext, version: u8, token: u16) !void {
     const status = if (ack.error_name) |value| value else "NONE";
 
     if (runtime_matches and std.ascii.eqlIgnoreCase(status, "NONE") and runtime.?.pending_downlink_json != null) {
-        const lorawan_service = lorawan.service.Service.init(context.server.app.database());
+        const lorawan_service = lora.service.Service.init(context.server.app.database());
         try lorawan_service.syncAcknowledgedDownlink(context.server.app.allocator, runtime.?.pending_downlink_json.?);
     }
 
@@ -620,14 +620,14 @@ test "tx ack persists pending mac commands and later uplink syncs node state" {
     const pull_ack = try harness.recvOnClient();
     defer allocator.free(pull_ack);
 
-    const request_fopts = try lorawan.commands.encodeFOpts(allocator, &[_]lorawan.commands.Command{
+    const request_fopts = try lora.commands.encodeFOpts(allocator, &[_]lora.commands.Command{
         .{ .link_adr_req = .{ .data_rate = 5, .tx_power = 7, .channel_mask = 0x00FF, .ch_mask_cntl = 0, .nb_rep = 1 } },
     });
     defer allocator.free(request_fopts);
 
     const nwk_s_key = [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F };
     const app_s_key = [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F };
-    const downlink_phy = try lorawan.codec.encodeDataDownlink(
+    const downlink_phy = try lora.codec.encodeDataDownlink(
         allocator,
         [_]u8{ 0x01, 0x02, 0x03, 0x04 },
         nwk_s_key,
@@ -724,7 +724,7 @@ test "tx ack persists oversized pending mac commands encoded on port zero" {
     const pull_ack = try harness.recvOnClient();
     defer allocator.free(pull_ack);
 
-    const request_fopts = try lorawan.commands.encodeFOpts(allocator, &[_]lorawan.commands.Command{
+    const request_fopts = try lora.commands.encodeFOpts(allocator, &[_]lora.commands.Command{
         .{ .link_adr_req = .{ .data_rate = 5, .tx_power = 7, .channel_mask = 0x00FF, .ch_mask_cntl = 0, .nb_rep = 1 } },
         .{ .link_adr_req = .{ .data_rate = 5, .tx_power = 6, .channel_mask = 0x0F0F, .ch_mask_cntl = 0, .nb_rep = 1 } },
         .{ .link_adr_req = .{ .data_rate = 4, .tx_power = 5, .channel_mask = 0xF0F0, .ch_mask_cntl = 0, .nb_rep = 1 } },
@@ -735,7 +735,7 @@ test "tx ack persists oversized pending mac commands encoded on port zero" {
 
     const nwk_s_key = [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F };
     const app_s_key = [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F };
-    const downlink_phy = try lorawan.codec.encodeDataDownlink(
+    const downlink_phy = try lora.codec.encodeDataDownlink(
         allocator,
         [_]u8{ 0x01, 0x02, 0x03, 0x04 },
         nwk_s_key,
@@ -748,7 +748,7 @@ test "tx ack persists oversized pending mac commands encoded on port zero" {
     );
     defer allocator.free(downlink_phy);
 
-    const decoded = try lorawan.codec.decodeFrame(downlink_phy);
+    const decoded = try lora.codec.decodeFrame(downlink_phy);
     const frame = switch (decoded) {
         .data => |value| value,
         else => return error.UnexpectedFrameType,
@@ -1091,7 +1091,7 @@ test "confirmed uplink triggers empty ack downlink" {
 
     const downlink_phy = try extractPullRespPhyPayload(allocator, pull_resp[4..]);
     defer allocator.free(downlink_phy);
-    const decoded = try lorawan.codec.decodeFrame(downlink_phy);
+    const decoded = try lora.codec.decodeFrame(downlink_phy);
     const frame = switch (decoded) {
         .data => |value| value,
         else => return error.UnexpectedFrameType,
@@ -1135,7 +1135,7 @@ test "confirmed downlink is tracked, retried, and cleared by uplink ack" {
 
     const nwk_s_key = [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F };
     const app_s_key = [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F };
-    const confirmed_downlink_phy = try lorawan.codec.encodeDataDownlink(
+    const confirmed_downlink_phy = try lora.codec.encodeDataDownlink(
         allocator,
         [_]u8{ 0x01, 0x02, 0x03, 0x04 },
         nwk_s_key,
@@ -1293,7 +1293,7 @@ test "queued application downlinks are delivered and set fpending until drained"
     defer allocator.free(first_pull_resp);
     const first_downlink_phy = try extractPullRespPhyPayload(allocator, first_pull_resp[4..]);
     defer allocator.free(first_downlink_phy);
-    const first_decoded = try lorawan.codec.decodeFrame(first_downlink_phy);
+    const first_decoded = try lora.codec.decodeFrame(first_downlink_phy);
     const first_frame = switch (first_decoded) {
         .data => |value| value,
         else => return error.UnexpectedFrameType,
@@ -1307,7 +1307,7 @@ test "queued application downlinks are delivered and set fpending until drained"
         defer node.deinit(allocator);
         try std.testing.expectEqual(@as(usize, 2), node.application_downlink_queue.?.len);
 
-        const first_payload = try lorawan.codec.decodeDataPayload(allocator, first_frame, node);
+        const first_payload = try lora.codec.decodeDataPayload(allocator, first_frame, node);
         defer first_payload.deinit(allocator);
         try std.testing.expectEqualSlices(u8, "hello", first_payload.decoded_payload);
     }
@@ -1352,7 +1352,7 @@ test "queued application downlinks are delivered and set fpending until drained"
     defer allocator.free(second_pull_resp);
     const second_downlink_phy = try extractPullRespPhyPayload(allocator, second_pull_resp[4..]);
     defer allocator.free(second_downlink_phy);
-    const second_decoded = try lorawan.codec.decodeFrame(second_downlink_phy);
+    const second_decoded = try lora.codec.decodeFrame(second_downlink_phy);
     const second_frame = switch (second_decoded) {
         .data => |value| value,
         else => return error.UnexpectedFrameType,
@@ -1365,7 +1365,7 @@ test "queued application downlinks are delivered and set fpending until drained"
         const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
         defer node.deinit(allocator);
 
-        const second_payload = try lorawan.codec.decodeDataPayload(allocator, second_frame, node);
+        const second_payload = try lora.codec.decodeDataPayload(allocator, second_frame, node);
         defer second_payload.deinit(allocator);
         try std.testing.expectEqualSlices(u8, "bye", second_payload.decoded_payload);
     }
@@ -1400,7 +1400,7 @@ test "queued application downlinks keep fpending when oversized mac commands def
     );
     try seedApplicationQueue(harness.app.database(), [_]u8{ 0x01, 0x02, 0x03, 0x04 });
 
-    const request_fopts = try lorawan.commands.encodeFOpts(allocator, &[_]lorawan.commands.Command{
+    const request_fopts = try lora.commands.encodeFOpts(allocator, &[_]lora.commands.Command{
         .{ .link_adr_req = .{ .data_rate = 5, .tx_power = 7, .channel_mask = 0x00FF, .ch_mask_cntl = 0, .nb_rep = 1 } },
         .{ .link_adr_req = .{ .data_rate = 5, .tx_power = 6, .channel_mask = 0x0F0F, .ch_mask_cntl = 0, .nb_rep = 1 } },
         .{ .link_adr_req = .{ .data_rate = 4, .tx_power = 5, .channel_mask = 0xF0F0, .ch_mask_cntl = 0, .nb_rep = 1 } },
@@ -1449,7 +1449,7 @@ test "queued application downlinks keep fpending when oversized mac commands def
     defer allocator.free(pull_resp);
     const downlink_phy = try extractPullRespPhyPayload(allocator, pull_resp[4..]);
     defer allocator.free(downlink_phy);
-    const decoded = try lorawan.codec.decodeFrame(downlink_phy);
+    const decoded = try lora.codec.decodeFrame(downlink_phy);
     const frame = switch (decoded) {
         .data => |value| value,
         else => return error.UnexpectedFrameType,
@@ -1853,7 +1853,7 @@ fn seedDevice(db: app_mod.Database, name: []const u8, dev_eui: []const u8, app_e
 
 fn seedNode(db: app_mod.Database, dev_addr: [4]u8, app_s_key: [16]u8, nwk_s_key: [16]u8) !void {
     const repo = state_repository.Repository.init(db);
-    const node = lorawan.types.Node.init(dev_addr, app_s_key, nwk_s_key, .{}, .{ .tx_power = 0, .data_rate = 0 });
+    const node = lora.types.Node.init(dev_addr, app_s_key, nwk_s_key, .{}, .{ .tx_power = 0, .data_rate = 0 });
     try repo.upsertNode(db.allocator, node);
 }
 
@@ -1862,9 +1862,9 @@ fn seedApplicationQueue(db: app_mod.Database, dev_addr: [4]u8) !void {
     var node = (try repo.findNodeByDevAddr(db.allocator, dev_addr)).?;
     defer node.deinit(db.allocator);
 
-    node.application_downlink_queue = try db.allocator.alloc(lorawan.types.ApplicationDownlink, 2);
-    node.application_downlink_queue.?[0] = lorawan.types.ApplicationDownlink.init(false, 15, try db.allocator.dupe(u8, "hello"));
-    node.application_downlink_queue.?[1] = lorawan.types.ApplicationDownlink.init(false, 9, try db.allocator.dupe(u8, "bye"));
+    node.application_downlink_queue = try db.allocator.alloc(lora.types.ApplicationDownlink, 2);
+    node.application_downlink_queue.?[0] = lora.types.ApplicationDownlink.init(false, 15, try db.allocator.dupe(u8, "hello"));
+    node.application_downlink_queue.?[1] = lora.types.ApplicationDownlink.init(false, 9, try db.allocator.dupe(u8, "bye"));
     try repo.upsertNode(db.allocator, node);
 }
 

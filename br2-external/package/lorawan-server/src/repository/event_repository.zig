@@ -1,5 +1,5 @@
 const app_mod = @import("../app.zig");
-const packets = @import("../lorawan/packets.zig");
+const packets = @import("../lora/packets.zig");
 const storage = @import("../storage.zig");
 const Database = app_mod.Database;
 

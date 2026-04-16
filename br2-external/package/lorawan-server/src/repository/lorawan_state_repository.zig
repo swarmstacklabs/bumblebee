@@ -1,9 +1,9 @@
 const std = @import("std");
 
 const app_mod = @import("../app.zig");
-const region_mod = @import("../lorawan/region.zig");
+const region_mod = @import("../lora/region.zig");
 const storage = @import("../storage.zig");
-const types = @import("../lorawan/types.zig");
+const types = @import("../lora/types.zig");
 const Database = app_mod.Database;
 
 pub const Repository = struct {

@@ -14,12 +14,12 @@ const event_repository = @import("repository/event_repository.zig");
 const device_repository = @import("repository/device_repository.zig");
 const gateway_repository = @import("repository/gateway_repository.zig");
 const lorawan_state_repository = @import("repository/lorawan_state_repository.zig");
-const pending_downlinks = @import("lorawan/pending_downlinks.zig");
-const lorawan_context = @import("lorawan/context.zig");
-const lorawan_dispatcher = @import("lorawan/dispatcher.zig");
-const lorawan_router = @import("lorawan/router.zig");
-const lorawan_runtime = @import("lorawan/runtime.zig");
-const types = @import("lorawan/types.zig");
+const pending_downlinks = @import("lora/pending_downlinks.zig");
+const lorawan_context = @import("lora/context.zig");
+const lorawan_dispatcher = @import("lora/dispatcher.zig");
+const lorawan_router = @import("lora/router.zig");
+const lorawan_runtime = @import("lora/runtime.zig");
+const types = @import("lora/types.zig");
 
 fn expectInitDeinit(comptime T: type, comptime name: []const u8) void {
     if (!@hasDecl(T, "init")) @compileError(name ++ " must declare init()");
