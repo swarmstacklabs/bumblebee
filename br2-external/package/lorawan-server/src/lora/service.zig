@@ -92,13 +92,13 @@ pub const Service = struct {
         }
 
         if (frame.f_port == 0 and frame.frm_payload.len > 0) {
-            const parsed = try codec.decodeDataPayload(allocator, frame, node);
+            const parsed = try codec.decodeDataPayloadWithFCnt(allocator, frame, node, node.f_cnt_down);
             defer parsed.deinit(allocator);
             const combined = try appendPendingMacCommands(allocator, node.pending_mac_commands, parsed.decoded_payload);
             if (node.pending_mac_commands) |value| allocator.free(value);
             node.pending_mac_commands = combined;
         } else if (frame.f_port) |port| {
-            const parsed = try codec.decodeDataPayload(allocator, frame, node);
+            const parsed = try codec.decodeDataPayloadWithFCnt(allocator, frame, node, node.f_cnt_down);
             defer parsed.deinit(allocator);
             acknowledgeApplicationDownlink(allocator, &node, frame.confirmed, port, parsed.decoded_payload);
         }
@@ -137,7 +137,7 @@ pub const Service = struct {
             dev_addr,
             network.rxwin_init.rx1_dr_offset,
             network.rxwin_init.rx2_data_rate,
-            @intCast(network.rx1_delay_s),
+            @intCast(if (network.rx1_delay_s <= 1) 0 else network.rx1_delay_s),
             network.cf_list_100hz,
         );
 
@@ -302,7 +302,7 @@ fn rxTimeMs(rxpk: Rxpk) i64 {
 
 fn currentLinkMetrics(rxpk: Rxpk) mac_handlers.LinkMetrics {
     return .{
-        .rx_time_ms = rxTimeMs(rxpk),
+        .rx_time_ms = rxpk.tmms,
         .margin = linkCheckMargin(rxpk),
         .gateway_count = linkCheckGatewayCount(rxpk),
     };
@@ -649,4 +649,34 @@ test "class A FSK uplink in EU868 can stay in RX1 with overridden delay" {
     try std.testing.expectEqual(@as(u32, 4), selected.delay_s);
     try std.testing.expectEqual(@as(f64, 868.1), selected.freq);
     try std.testing.expectEqual(@as(u32, 50_000), selected.datr.fsk);
+}
+
+test "currentLinkMetrics only exposes device time when tmms is present" {
+    const with_tmms = packets.Rxpk{
+        .tmst = 1,
+        .freq = 868.1,
+        .datr = .{ .lora = try std.testing.allocator.dupe(u8, "SF7BW125") },
+        .codr = try std.testing.allocator.dupe(u8, "4/5"),
+        .data = try std.testing.allocator.alloc(u8, 0),
+        .time = null,
+        .tmms = 1234,
+        .rssi = null,
+        .lsnr = null,
+    };
+    defer with_tmms.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(?i64, 1234), currentLinkMetrics(with_tmms).rx_time_ms);
+
+    const without_tmms = packets.Rxpk{
+        .tmst = 1,
+        .freq = 868.1,
+        .datr = .{ .lora = try std.testing.allocator.dupe(u8, "SF7BW125") },
+        .codr = try std.testing.allocator.dupe(u8, "4/5"),
+        .data = try std.testing.allocator.alloc(u8, 0),
+        .time = null,
+        .tmms = null,
+        .rssi = null,
+        .lsnr = null,
+    };
+    defer without_tmms.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(?i64, null), currentLinkMetrics(without_tmms).rx_time_ms);
 }

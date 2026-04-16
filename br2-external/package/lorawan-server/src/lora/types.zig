@@ -312,14 +312,15 @@ pub const DataFrame = struct {
     adr: bool,
     adr_ack_req: bool,
     ack: bool,
-    pending: bool,
+    class_b: bool,
+    f_pending: bool,
     f_cnt16: u16,
     f_opts: []const u8,
     f_port: ?u8,
     frm_payload: []const u8,
     mic: [4]u8,
 
-    pub fn init(confirmed: bool, is_uplink: bool, dev_addr: [4]u8, adr: bool, adr_ack_req: bool, ack: bool, pending: bool, f_cnt16: u16, f_opts: []const u8, f_port: ?u8, frm_payload: []const u8, mic: [4]u8) DataFrame {
+    pub fn init(confirmed: bool, is_uplink: bool, dev_addr: [4]u8, adr: bool, adr_ack_req: bool, ack: bool, class_b: bool, f_pending: bool, f_cnt16: u16, f_opts: []const u8, f_port: ?u8, frm_payload: []const u8, mic: [4]u8) DataFrame {
         return .{
             .confirmed = confirmed,
             .is_uplink = is_uplink,
@@ -327,7 +328,8 @@ pub const DataFrame = struct {
             .adr = adr,
             .adr_ack_req = adr_ack_req,
             .ack = ack,
-            .pending = pending,
+            .class_b = class_b,
+            .f_pending = f_pending,
             .f_cnt16 = f_cnt16,
             .f_opts = f_opts,
             .f_port = f_port,

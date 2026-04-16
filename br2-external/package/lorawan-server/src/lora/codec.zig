@@ -78,7 +78,8 @@ fn decodeDataFrame(payload: []const u8, is_uplink: bool) !types.DataFrame {
         .adr = (fctrl & 0x80) != 0,
         .adr_ack_req = (fctrl & 0x40) != 0,
         .ack = (fctrl & 0x20) != 0,
-        .pending = (fctrl & 0x10) != 0,
+        .class_b = is_uplink and (fctrl & 0x10) != 0,
+        .f_pending = !is_uplink and (fctrl & 0x10) != 0,
         .f_cnt16 = fcnt16,
         .f_opts = payload[opts_start..opts_end],
         .f_port = fport,
@@ -118,7 +119,7 @@ pub fn encodeJoinAccept(allocator: std.mem.Allocator, app_key: [16]u8, app_nonce
 
     buffer[index] = ((rx1_dr_offset & 0x07) << 4) | (rx2_data_rate & 0x0F);
     index += 1;
-    buffer[index] = rx_delay;
+    buffer[index] = if (rx_delay <= 1) 0 else rx_delay;
     index += 1;
 
     if (cf_list_100hz) |list| {
@@ -167,7 +168,11 @@ pub fn verifyDataFrameMic(payload: []const u8, nwk_s_key: [16]u8, dev_addr: [4]u
 }
 
 pub fn decodeDataPayload(allocator: std.mem.Allocator, frame: types.DataFrame, node: types.Node) !types.ParsedDataFrame {
-    const f_cnt = fullFCnt(node.f_cnt_up, frame.f_cnt16);
+    const previous_f_cnt = if (frame.is_uplink) node.f_cnt_up else node.f_cnt_down;
+    return decodeDataPayloadWithFCnt(allocator, frame, node, fullFCnt(previous_f_cnt, frame.f_cnt16));
+}
+
+pub fn decodeDataPayloadWithFCnt(allocator: std.mem.Allocator, frame: types.DataFrame, node: types.Node, f_cnt: u32) !types.ParsedDataFrame {
     const payload_key = if (frame.f_port != null and frame.f_port.? == 0) node.nwk_s_key else node.app_s_key;
     const decoded = try cipherPayload(allocator, frame.frm_payload, payload_key, frame.is_uplink, frame.dev_addr, f_cnt);
     errdefer allocator.free(decoded);
@@ -468,6 +473,78 @@ test "encodeDataDownlink moves oversized MAC commands into port-zero payload" {
     defer allocator.free(outgoing);
     try std.testing.expectEqual(@as(usize, 4), outgoing.len);
     try std.testing.expect(outgoing[0] == .link_adr_req);
+}
+
+test "decodeFrame separates uplink class B from downlink FPending" {
+    const uplink = try decodeFrame(&[_]u8{
+        0b01000000,
+        0x04,
+        0x03,
+        0x02,
+        0x01,
+        0b00010000,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+    });
+    const uplink_frame = switch (uplink) {
+        .data => |value| value,
+        else => return error.UnexpectedFrameType,
+    };
+    try std.testing.expect(uplink_frame.class_b);
+    try std.testing.expect(!uplink_frame.f_pending);
+
+    const downlink = try decodeFrame(&[_]u8{
+        0b01100000,
+        0x04,
+        0x03,
+        0x02,
+        0x01,
+        0b00010000,
+        0x01,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+        0x00,
+    });
+    const downlink_frame = switch (downlink) {
+        .data => |value| value,
+        else => return error.UnexpectedFrameType,
+    };
+    try std.testing.expect(!downlink_frame.class_b);
+    try std.testing.expect(downlink_frame.f_pending);
+}
+
+test "encodeJoinAccept maps one-second rx delay to zero" {
+    const allocator = std.testing.allocator;
+    const app_key = [_]u8{
+        0x2B, 0x7E, 0x15, 0x16, 0x28, 0xAE, 0xD2, 0xA6,
+        0xAB, 0xF7, 0x15, 0x88, 0x09, 0xCF, 0x4F, 0x3C,
+    };
+    const encoded = try encodeJoinAccept(allocator, app_key, .{ 1, 2, 3 }, .{ 0, 0, 0x13 }, .{ 1, 2, 3, 4 }, 0, 0, 1, null);
+    defer allocator.free(encoded);
+
+    var decrypted = try allocator.alloc(u8, encoded.len);
+    defer allocator.free(decrypted);
+    decrypted[0] = encoded[0];
+
+    const ctx = Aes128.initEnc(app_key);
+    var offset: usize = 0;
+    while (offset < encoded.len - 1) : (offset += 16) {
+        var block_in: [16]u8 = [_]u8{0} ** 16;
+        const block_len = @min(16, encoded.len - 1 - offset);
+        @memcpy(block_in[0..block_len], encoded[1 + offset .. 1 + offset + block_len]);
+        var block_out: [16]u8 = undefined;
+        var enc = ctx;
+        enc.encrypt(block_out[0..], block_in[0..]);
+        @memcpy(decrypted[1 + offset .. 1 + offset + block_len], block_out[0..block_len]);
+    }
+
+    try std.testing.expectEqual(@as(u8, 0), decrypted[11]);
 }
 
 test "data payload cipher round trip" {

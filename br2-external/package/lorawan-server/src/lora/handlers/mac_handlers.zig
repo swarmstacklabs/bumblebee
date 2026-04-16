@@ -9,7 +9,7 @@ const types = @import("../types.zig");
 const State = struct {
     allocator: std.mem.Allocator,
     mode: Mode,
-    rx_time_ms: i64 = 0,
+    rx_time_ms: ?i64 = null,
     link_margin: u8 = 0,
     gateway_count: usize = 0,
     node: ?*types.Node = null,
@@ -41,7 +41,7 @@ const dispatcher = dispatcher_mod.Dispatcher.init(&.{}, router_mod.Router.init(&
 const adr_required_observations: u16 = 20;
 
 pub const LinkMetrics = struct {
-    rx_time_ms: i64 = 0,
+    rx_time_ms: ?i64 = null,
     margin: u8 = 0,
     gateway_count: usize = 0,
 };
@@ -123,9 +123,10 @@ fn handleLinkCheckReq(ctx: *context_mod.Context) !void {
 fn handleDeviceTimeReq(ctx: *context_mod.Context) !void {
     const state = ctx.data(State);
     if (state.mode != .response) return;
+    const rx_time_ms = state.rx_time_ms orelse return;
 
     try ctx.appendResponse(.{ .device_time_ans = .{
-        .milliseconds_since_epoch = state.rx_time_ms,
+        .milliseconds_since_epoch = rx_time_ms,
     } });
 }
 
@@ -571,6 +572,23 @@ test "mac command handlers build responses via dispatcher" {
     try std.testing.expectEqual(@as(u8, 3), response[0].link_check_ans.gateway_count);
     try std.testing.expect(response[1] == .device_time_ans);
     try std.testing.expectEqual(@as(i64, 1234), response[1].device_time_ans.milliseconds_since_epoch);
+}
+
+test "mac command handlers skip device time response without GPS-synced rx time" {
+    const incoming = [_]commands.Command{
+        .link_check_req,
+        .device_time_req,
+    };
+
+    const response = try buildResponses(std.testing.allocator, &incoming, .{
+        .rx_time_ms = null,
+        .margin = 17,
+        .gateway_count = 3,
+    });
+    defer std.testing.allocator.free(response);
+
+    try std.testing.expectEqual(@as(usize, 1), response.len);
+    try std.testing.expect(response[0] == .link_check_ans);
 }
 
 test "mac command handlers build network-originated commands from node policy" {
