@@ -179,6 +179,10 @@ pub const ApplicationDownlink = struct {
     pub fn deinit(self: ApplicationDownlink, allocator: std.mem.Allocator) void {
         allocator.free(self.payload);
     }
+
+    pub fn txData(self: ApplicationDownlink, pending: bool) TxData {
+        return TxData.init(self.confirmed, self.port, self.payload, pending);
+    }
 };
 
 pub const Node = struct {
@@ -241,6 +245,13 @@ pub const Node = struct {
             allocator.free(value);
         }
         if (self.pending_confirmed_downlink) |value| allocator.free(value);
+    }
+
+    pub fn nextQueuedApplicationDownlink(self: Node) ?TxData {
+        const queue = self.application_downlink_queue orelse return null;
+        if (queue.len == 0) return null;
+
+        return queue[0].txData(queue.len > 1);
     }
 };
 
@@ -349,3 +360,32 @@ pub const ParsedDataFrame = struct {
         allocator.free(self.decoded_payload);
     }
 };
+
+test "node queued application downlink sets pending when more remain" {
+    var node = Node.init(.{ 0x01, 0x02, 0x03, 0x04 }, [_]u8{0} ** 16, [_]u8{0} ** 16, .{}, .{ .tx_power = 0, .data_rate = 0 });
+    defer node.deinit(std.testing.allocator);
+
+    node.application_downlink_queue = try std.testing.allocator.alloc(ApplicationDownlink, 2);
+    node.application_downlink_queue.?[0] = ApplicationDownlink.init(false, 15, try std.testing.allocator.dupe(u8, "hello"));
+    node.application_downlink_queue.?[1] = ApplicationDownlink.init(true, 9, try std.testing.allocator.dupe(u8, "bye"));
+
+    const tx_data = node.nextQueuedApplicationDownlink().?;
+    try std.testing.expectEqual(false, tx_data.confirmed);
+    try std.testing.expectEqual(@as(?u8, 15), tx_data.port);
+    try std.testing.expectEqualSlices(u8, "hello", tx_data.data);
+    try std.testing.expect(tx_data.pending);
+}
+
+test "node queued application downlink clears pending for final item" {
+    var node = Node.init(.{ 0x01, 0x02, 0x03, 0x04 }, [_]u8{0} ** 16, [_]u8{0} ** 16, .{}, .{ .tx_power = 0, .data_rate = 0 });
+    defer node.deinit(std.testing.allocator);
+
+    node.application_downlink_queue = try std.testing.allocator.alloc(ApplicationDownlink, 1);
+    node.application_downlink_queue.?[0] = ApplicationDownlink.init(true, 9, try std.testing.allocator.dupe(u8, "bye"));
+
+    const tx_data = node.nextQueuedApplicationDownlink().?;
+    try std.testing.expectEqual(true, tx_data.confirmed);
+    try std.testing.expectEqual(@as(?u8, 9), tx_data.port);
+    try std.testing.expectEqualSlices(u8, "bye", tx_data.data);
+    try std.testing.expect(!tx_data.pending);
+}

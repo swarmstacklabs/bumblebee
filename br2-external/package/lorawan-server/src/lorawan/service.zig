@@ -210,7 +210,7 @@ pub const Service = struct {
         defer allocator.free(network_commands);
         const outgoing_commands = try appendCommands(allocator, response_commands, network_commands);
         defer allocator.free(outgoing_commands);
-        const queued_application = nextApplicationDownlink(node.application_downlink_queue);
+        const queued_application = node.nextQueuedApplicationDownlink();
 
         if (outgoing_commands.len > 0 or parsed.confirmed or queued_application != null) {
             const tx_data = if (queued_application != null and outgoing_commands.len <= 15)
@@ -318,14 +318,6 @@ fn appendCommands(allocator: std.mem.Allocator, first: []const Command, second: 
     @memcpy(out[0..first.len], first);
     @memcpy(out[first.len..], second);
     return out;
-}
-
-fn nextApplicationDownlink(queue: ?[]const types.ApplicationDownlink) ?types.TxData {
-    const items = queue orelse return null;
-    if (items.len == 0) return null;
-
-    const first = items[0];
-    return types.TxData.init(first.confirmed, first.port, first.payload, items.len > 1);
 }
 
 fn acknowledgeApplicationDownlink(allocator: std.mem.Allocator, node: *types.Node, confirmed: bool, port: u8, payload: []const u8) void {
