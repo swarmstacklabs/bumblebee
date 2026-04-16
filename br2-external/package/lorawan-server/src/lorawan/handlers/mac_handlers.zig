@@ -13,6 +13,7 @@ const State = struct {
     link_margin: u8 = 0,
     gateway_count: usize = 0,
     node: ?*types.Node = null,
+    region: ?types.Region = null,
     pending_commands: []const commands.Command = &.{},
     pending_index: usize = 0,
     remaining_pending: std.ArrayListUnmanaged(commands.Command) = .{},
@@ -38,7 +39,6 @@ const routes = [_]router_mod.Route{
 
 const dispatcher = dispatcher_mod.Dispatcher.init(&.{}, router_mod.Router.init(&routes));
 const adr_required_observations: u16 = 20;
-const adr_max_data_rate: u8 = 5;
 
 pub const LinkMetrics = struct {
     rx_time_ms: i64 = 0,
@@ -68,12 +68,13 @@ pub fn buildNetworkCommands(
     node: types.Node,
     network_rxwin: types.RxWindowConfig,
     network_rx1_delay_s: u32,
+    region: types.Region,
     pending_commands: []const commands.Command,
 ) ![]commands.Command {
     var out = std.ArrayList(commands.Command){};
     errdefer out.deinit(allocator);
 
-    if (buildAdrCommand(node, pending_commands)) |command| {
+    if (buildAdrCommand(region, node, pending_commands)) |command| {
         try out.append(allocator, command);
     }
 
@@ -81,7 +82,10 @@ pub fn buildNetworkCommands(
         try out.append(allocator, .dev_status_req);
     }
 
-    if (!rxWindowEqual(node.rxwin_use, network_rxwin) and !containsCommandTag(pending_commands, .rx_param_setup_req)) {
+    if (!rxWindowEqual(node.rxwin_use, network_rxwin) and
+        network_rxwin.rx1_dr_offset <= region.maxRx1DrOffset() and
+        !containsCommandTag(pending_commands, .rx_param_setup_req))
+    {
         try out.append(allocator, .{ .rx_param_setup_req = .{
             .rx1_dr_offset = network_rxwin.rx1_dr_offset,
             .rx2_data_rate = network_rxwin.rx2_data_rate,
@@ -147,11 +151,14 @@ fn handleAckOnly(ctx: *context_mod.Context) !void {
         .link_adr_ans => |answer| {
             switch (pending) {
                 .link_adr_req => |request| {
+                    const region = state.region orelse types.Region.eu868;
                     resetAdrObservations(node);
                     if (answer.power_ack and answer.data_rate_ack and answer.channel_mask_ack) {
                         node.adr_use.tx_power = @intCast(request.tx_power);
                         node.adr_use.data_rate = request.data_rate;
-                        try applyChannelMaskState(state.allocator, node, request.ch_mask_cntl, request.channel_mask);
+                        if (region.supportsSimpleChannelMask()) {
+                            try applyChannelMaskState(state.allocator, node, request.ch_mask_cntl, request.channel_mask);
+                        }
                     }
                 },
                 else => {},
@@ -186,16 +193,19 @@ fn handleAckOnly(ctx: *context_mod.Context) !void {
         .tx_param_setup_ans => {
             switch (pending) {
                 .tx_param_setup_req => |request| {
-                    node.adr_use.downlink_dwell_time = request.downlink_dwell;
-                    node.adr_use.uplink_dwell_time = request.uplink_dwell;
-                    node.adr_use.max_eirp = request.max_eirp;
+                    const region = state.region orelse types.Region.eu868;
+                    if (region.supportsTxParamSetup()) {
+                        node.adr_use.downlink_dwell_time = request.downlink_dwell;
+                        node.adr_use.uplink_dwell_time = request.uplink_dwell;
+                        node.adr_use.max_eirp = request.max_eirp;
+                    }
                 },
                 else => {},
             }
         },
         .new_channel_ans => |answer| {
             switch (pending) {
-                .new_channel_req => |request| if (answer.data_rate_range_ok and answer.channel_freq_ok) {
+                .new_channel_req => |request| if ((state.region orelse types.Region.eu868).supportsNewChannelReq() and answer.data_rate_range_ok and answer.channel_freq_ok) {
                     try applyExtraChannel(
                         state.allocator,
                         node,
@@ -210,7 +220,7 @@ fn handleAckOnly(ctx: *context_mod.Context) !void {
         },
         .dl_channel_ans => |answer| {
             switch (pending) {
-                .dl_channel_req => |request| if (answer.uplink_freq_exists and answer.channel_freq_ok) {
+                .dl_channel_req => |request| if ((state.region orelse types.Region.eu868).supportsDlChannelReq() and answer.uplink_freq_exists and answer.channel_freq_ok) {
                     try applyDlChannelMapping(
                         state.allocator,
                         node,
@@ -225,13 +235,14 @@ fn handleAckOnly(ctx: *context_mod.Context) !void {
     }
 }
 
-fn buildAdrCommand(node: types.Node, pending_commands: []const commands.Command) ?commands.Command {
+fn buildAdrCommand(region: types.Region, node: types.Node, pending_commands: []const commands.Command) ?commands.Command {
     if (containsCommandTag(pending_commands, .link_adr_req)) return null;
     if (node.adr_observation_count < adr_required_observations) return null;
+    if (!region.supportsSimpleChannelMask()) return null;
 
     const current_data_rate = node.adr_last_data_rate orelse return null;
     const average_lsnr = node.adr_average_lsnr orelse return null;
-    const desired_data_rate = desiredAdrDataRate(current_data_rate, average_lsnr);
+    const desired_data_rate = desiredAdrDataRate(region, current_data_rate, average_lsnr);
     const desired_tx_power = clampTxPowerIndex(node.adr_use.tx_power);
     const desired_channel_mask = desiredAdrChannelMask(node);
     const current_channel_mask = currentAdrChannelMask(node);
@@ -252,7 +263,7 @@ fn buildAdrCommand(node: types.Node, pending_commands: []const commands.Command)
     } };
 }
 
-fn desiredAdrDataRate(current_data_rate: u8, average_lsnr: f64) u8 {
+fn desiredAdrDataRate(region: types.Region, current_data_rate: u8, average_lsnr: f64) u8 {
     const current_sf = spreadingFactorForDataRate(current_data_rate) orelse return current_data_rate;
     const max_snr = -5.0 - 2.5 * @as(f64, @floatFromInt(current_sf - 6));
     const steps_float = (average_lsnr - (max_snr + 10.0)) / 3.0;
@@ -260,7 +271,7 @@ fn desiredAdrDataRate(current_data_rate: u8, average_lsnr: f64) u8 {
     if (steps <= 0) return current_data_rate;
 
     const increased: i32 = @as(i32, current_data_rate) + steps;
-    return @intCast(@min(increased, adr_max_data_rate));
+    return @intCast(@min(increased, region.maxUplinkDataRate()));
 }
 
 fn spreadingFactorForDataRate(data_rate: u8) ?u8 {
@@ -314,7 +325,7 @@ fn resetAdrObservations(node: *types.Node) void {
     node.adr_average_lsnr = null;
 }
 
-pub fn applyToNode(allocator: std.mem.Allocator, node: *types.Node, pending_commands: []const commands.Command, incoming: []const commands.Command) ![]commands.Command {
+pub fn applyToNode(allocator: std.mem.Allocator, region: types.Region, node: *types.Node, pending_commands: []const commands.Command, incoming: []const commands.Command) ![]commands.Command {
     var ctx = context_mod.Context.init(allocator);
     defer ctx.deinit();
 
@@ -322,6 +333,7 @@ pub fn applyToNode(allocator: std.mem.Allocator, node: *types.Node, pending_comm
         .allocator = allocator,
         .mode = .node_update,
         .node = node,
+        .region = region,
         .pending_commands = pending_commands,
     };
     defer state.remaining_pending.deinit(allocator);
@@ -572,6 +584,7 @@ test "mac command handlers build network-originated commands from node policy" {
         node,
         .{ .rx1_dr_offset = 3, .rx2_data_rate = 4, .frequency = 869.525 },
         1,
+        .eu868,
         &.{},
     );
     defer std.testing.allocator.free(generated);
@@ -594,6 +607,7 @@ test "mac command handlers skip already pending network-originated commands" {
         node,
         .{ .rx1_dr_offset = 3, .rx2_data_rate = 4, .frequency = 869.525 },
         1,
+        .eu868,
         &[_]commands.Command{
             .dev_status_req,
             .{ .rx_param_setup_req = .{ .rx1_dr_offset = 3, .rx2_data_rate = 4, .frequency_100hz = 8695250 } },
@@ -617,6 +631,7 @@ test "mac command handlers emit adr request after enough high-margin observation
         node,
         .{},
         1,
+        .eu868,
         &.{},
     );
     defer std.testing.allocator.free(generated);
@@ -640,6 +655,7 @@ test "mac command handlers do not emit adr request before observation threshold"
         node,
         .{},
         1,
+        .eu868,
         &.{},
     );
     defer std.testing.allocator.free(generated);
@@ -655,7 +671,7 @@ test "mac command handlers update node state" {
     node.adr_average_rssi = -80.0;
     node.adr_average_lsnr = 5.0;
 
-    const remaining = try applyToNode(std.testing.allocator, &node, &[_]commands.Command{
+    const remaining = try applyToNode(std.testing.allocator, .as923, &node, &[_]commands.Command{
         .{ .link_adr_req = .{ .data_rate = 5, .tx_power = 7, .channel_mask = 0x00FF, .ch_mask_cntl = 0, .nb_rep = 1 } },
         .{ .duty_cycle_req = .{ .max_dcycle = 9 } },
         .{ .rx_param_setup_req = .{ .rx1_dr_offset = 3, .rx2_data_rate = 4, .frequency_100hz = 8695250 } },
@@ -698,7 +714,7 @@ test "mac command handlers persist channel plan state" {
     var node = types.Node.init([_]u8{ 1, 2, 3, 4 }, [_]u8{0} ** 16, [_]u8{0} ** 16, .{}, .{ .tx_power = 0, .data_rate = 0 });
     defer node.deinit(std.testing.allocator);
 
-    const remaining = try applyToNode(std.testing.allocator, &node, &[_]commands.Command{
+    const remaining = try applyToNode(std.testing.allocator, .eu868, &node, &[_]commands.Command{
         .{ .new_channel_req = .{ .channel_index = 3, .frequency_100hz = 8671000, .max_dr = 5, .min_dr = 0 } },
         .{ .dl_channel_req = .{ .channel_index = 3, .frequency_100hz = 8691000 } },
     }, &[_]commands.Command{

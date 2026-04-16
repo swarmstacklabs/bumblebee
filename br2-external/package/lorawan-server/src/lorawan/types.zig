@@ -1,6 +1,7 @@
 const std = @import("std");
 
 pub const DataRate = @import("packets.zig").DataRate;
+pub const Region = @import("region.zig").Region;
 
 pub const RxWindowConfig = struct {
     rx1_dr_offset: u8 = 0,
@@ -120,6 +121,7 @@ pub const Device = struct {
 
 pub const Network = struct {
     name: []u8,
+    region: Region,
     net_id: [3]u8,
     tx_codr: []u8,
     join1_delay_s: u32,
@@ -128,9 +130,10 @@ pub const Network = struct {
     rxwin_init: RxWindowConfig,
     cf_list_100hz: ?[]u32,
 
-    pub fn init(name: []u8, net_id: [3]u8, tx_codr: []u8, join1_delay_s: u32, rx1_delay_s: u32, gw_power: i32, rxwin_init: RxWindowConfig, cf_list_100hz: ?[]u32) Network {
+    pub fn init(name: []u8, region: Region, net_id: [3]u8, tx_codr: []u8, join1_delay_s: u32, rx1_delay_s: u32, gw_power: i32, rxwin_init: RxWindowConfig, cf_list_100hz: ?[]u32) Network {
         return .{
             .name = name,
+            .region = region,
             .net_id = net_id,
             .tx_codr = tx_codr,
             .join1_delay_s = join1_delay_s,

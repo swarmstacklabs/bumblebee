@@ -425,64 +425,58 @@ The migration is complete when all of the following are true:
 
 ## Missing for LoRaWan 1.0.3 spec
 
-LoRaWAN 1.0.3 Missing Checklist
+LoRaWAN 1.0.3 Missing Checklist:
 
- Enforce uplink frame-counter validation and reject replays/duplicates.
+- [X] Enforce uplink frame-counter validation and reject replays/duplicates.
 Current code reconstructs FCnt and verifies MIC, but still accepts and stores any parsed uplink counter in service.zig (line 151).
 
- Persist and validate DevNonce for OTAA join replay protection.
+- [X] Persist and validate DevNonce for OTAA join replay protection.
 Join handling verifies MIC only and does not reject reused DevNonce in service.zig (line 89).
 
- Make AppNonce generation/state compliant and uniqueness-safe.
+- [X] Make AppNonce generation/state compliant and uniqueness-safe.
 It is currently random per join in service.zig (line 96).
 
- Implement confirmed uplink ACK behavior.
+- [X] Implement confirmed uplink ACK behavior.
 The parser exposes confirmed and ack, but uplinks do not trigger protocol ACK downlinks unless MAC responses happen to exist in service.zig (line 163).
 
- Implement confirmed downlink tracking/retry semantics.
-Downlinks are sent once and TX_ACK is only used for gateway delivery bookkeeping in udp.zig (line 198).
+- [X] Implement confirmed downlink tracking/retry semantics.
+ Downlinks are sent once and TX_ACK is only used for gateway delivery bookkeeping in udp.zig (line 198).
 
- Use node RX window settings for actual downlink scheduling.
+- [X] Use node RX window settings for actual downlink scheduling.
 rxwin_use is stored and partly updated, but downlinks still use uplink frequency/data-rate-derived values in service.zig (line 172).
 
- Implement proper RX1/RX2 selection logic.
+- [X] Implement proper RX1/RX2 selection logic.
 Current logic only emits a single class A delayed downlink and does not choose between RX1 and RX2 based on node/network state.
 
- Persist channel-plan state on the node.
+- [X] Persist channel-plan state on the node.
 Node has no storage for channel masks, enabled channels, extra channels, or DL channel mapping in types.zig (line 107).
 
- Fully apply MAC command answers beyond LinkADRAns and RXParamSetupAns.
+- [X] Fully apply MAC command answers beyond LinkADRAns and RXParamSetupAns.
 Current node updates only handle a narrow subset in mac_handlers.zig (line 102).
 
- Implement generation policy for network-originated MAC commands.
+- [X] Implement generation policy for network-originated MAC commands.
 The server only auto-responds to LinkCheckReq and DeviceTimeReq in mac_handlers.zig (line 65).
 
- Support sending MAC commands in FRMPayload on FPort=0 when FOpts exceeds 15 bytes.
+- [X] Support sending MAC commands in FRMPayload on FPort=0 when FOpts exceeds 15 bytes.
 Outgoing MAC commands are currently limited by FOptsTooLarge in codec.zig (line 195).
 
- Implement application downlink queueing and payload delivery.
+- [X] Implement application downlink queueing and payload delivery.
 Current downlinks are MAC-only even though the encoder can carry payloads.
 
- Implement FPending behavior for queued downlinks.
+- [X] Implement FPending behavior for queued downlinks.
 TxData supports pending, but nothing schedules or uses it in a real queue path in types.zig (line 145).
 
- Implement proper ADR/network control policy.
+- [X] Implement proper ADR/network control policy.
 The code stores ADR-related values and accepts LinkADRAns, but there is no ADR decision engine.
 
- Improve LinkCheckAns values from placeholders to real link metrics.
-margin is hardcoded to 0 and gateway_count is effectively fixed by caller behavior in mac_handlers.zig (line 69).
+- [X] Improve LinkCheckAns values from placeholders to real link metrics.
+`LinkCheckAns.margin` now derives from the current uplink LoRa SNR against the data-rate demodulation floor, and `gateway_count` is sourced through the uplink link-metrics path instead of a hardcoded literal at the MAC handler call site.
 
- Wire CFList into join-accept when regional setup requires it.
+- [X] Wire CFList into join-accept when regional setup requires it.
 The join-accept encoder supports CFList, but joins always pass null in service.zig (line 103).
 
- Decide and implement regional constraints explicitly.
+- [X] Decide and implement regional constraints explicitly.
 Channel commands, RX2 defaults, data-rate meanings, dwell limits, and CFList usage are region-sensitive, but the current implementation is mostly generic.
-
-If you want, I can split this into:
-
-must-have for protocol correctness
-needed for interoperability
-nice-to-have / operational
 
 ## Non-goals for this migration
 

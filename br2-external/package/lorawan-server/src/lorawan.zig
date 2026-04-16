@@ -5,6 +5,7 @@ pub const dispatcher = @import("lorawan/dispatcher.zig");
 pub const gateway_registry = @import("lorawan/gateway_registry.zig");
 pub const packets = @import("lorawan/packets.zig");
 pub const pending_downlinks = @import("lorawan/pending_downlinks.zig");
+pub const region = @import("lorawan/region.zig");
 pub const router = @import("lorawan/router.zig");
 pub const runtime = @import("lorawan/runtime.zig");
 pub const state_repository = @import("repository/lorawan_state_repository.zig");
@@ -19,6 +20,7 @@ test {
     _ = gateway_registry;
     _ = packets;
     _ = pending_downlinks;
+    _ = region;
     _ = router;
     _ = runtime;
 }

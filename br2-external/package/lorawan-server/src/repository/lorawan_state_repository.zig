@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const app_mod = @import("../app.zig");
+const region_mod = @import("../lorawan/region.zig");
 const storage = @import("../storage.zig");
 const types = @import("../lorawan/types.zig");
 const Database = app_mod.Database;
@@ -50,16 +51,18 @@ pub const Repository = struct {
         const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_text, .{ .ignore_unknown_fields = true });
         defer parsed.deinit();
         const object = parsed.value.object;
+        const region = try parseRegion(object);
 
         return types.Network.init(
             try allocator.dupe(u8, stmt.readText(0).?),
+            region,
             try parseHexArray(3, try jsonRequiredString(object, "netid")),
             try allocator.dupe(u8, jsonOptionalString(object, "tx_codr") orelse "4/5"),
             jsonOptionalU32(object, "join1_delay") orelse 5,
             jsonOptionalU32(object, "rx1_delay") orelse 1,
             jsonOptionalI32(object, "gw_power") orelse 14,
-            parseRxWindow(object.get("rxwin_init")),
-            try parseCfList(allocator, object.get("cflist")),
+            parseRxWindow(region, object.get("rxwin_init")),
+            try parseCfList(allocator, region, object.get("cflist")),
         );
     }
 
@@ -134,7 +137,7 @@ pub const Repository = struct {
             dev_addr,
             try parseHexArray(16, try jsonRequiredString(object, "appskey")),
             try parseHexArray(16, try jsonRequiredString(object, "nwkskey")),
-            parseRxWindow(object.get("rxwin_use")),
+            parseRxWindow(.eu868, object.get("rxwin_use")),
             .{
                 .tx_power = jsonOptionalI32(object, "adr_tx_power") orelse 14,
                 .data_rate = jsonOptionalU8(object, "adr_data_rate") orelse 0,
@@ -192,6 +195,7 @@ pub const Repository = struct {
         var node = types.Node.init(dev_addr, app_s_key, nwk_s_key, network.rxwin_init, types.AdrConfig.init(network.gw_power, 0));
         node.device_id = device.id;
         node.dev_eui = device.dev_eui;
+        node.enabled_channels = try network.region.defaultEnabledChannels(allocator);
         try self.upsertNode(allocator, node);
         return (try self.findNodeByDevAddr(allocator, dev_addr)).?;
     }
@@ -318,13 +322,19 @@ fn encodeDeviceJson(allocator: std.mem.Allocator, device: types.Device) ![]u8 {
     }, .{});
 }
 
-fn parseRxWindow(value: ?std.json.Value) types.RxWindowConfig {
-    const root = value orelse return types.RxWindowConfig.init(0, 0, 869.525);
-    if (root != .object) return types.RxWindowConfig.init(0, 0, 869.525);
+fn parseRegion(object: std.json.ObjectMap) !types.Region {
+    const region_text = jsonOptionalString(object, "region") orelse "EU868";
+    return try region_mod.Region.parse(region_text);
+}
+
+fn parseRxWindow(region: types.Region, value: ?std.json.Value) types.RxWindowConfig {
+    const defaults = region.defaultRxWindow();
+    const root = value orelse return defaults;
+    if (root != .object) return defaults;
     return types.RxWindowConfig.init(
-        jsonOptionalU8(root.object, "rx1_dr_offset") orelse 0,
-        jsonOptionalU8(root.object, "rx2_data_rate") orelse 0,
-        jsonOptionalF64(root.object, "frequency") orelse 869.525,
+        jsonOptionalU8(root.object, "rx1_dr_offset") orelse defaults.rx1_dr_offset,
+        jsonOptionalU8(root.object, "rx2_data_rate") orelse defaults.rx2_data_rate,
+        jsonOptionalF64(root.object, "frequency") orelse defaults.frequency,
     );
 }
 
@@ -405,9 +415,10 @@ fn parseDlChannelMap(allocator: std.mem.Allocator, value: ?std.json.Value) !?[]t
     return try out.toOwnedSlice(allocator);
 }
 
-fn parseCfList(allocator: std.mem.Allocator, value: ?std.json.Value) !?[]u32 {
+fn parseCfList(allocator: std.mem.Allocator, region: types.Region, value: ?std.json.Value) !?[]u32 {
     const root = value orelse return null;
     if (root != .array) return null;
+    if (!region.supportsFrequencyCfList()) return error.InvalidJsonField;
 
     var out = std.ArrayListUnmanaged(u32){};
     defer out.deinit(allocator);

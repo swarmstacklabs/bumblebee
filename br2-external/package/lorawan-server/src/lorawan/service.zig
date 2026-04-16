@@ -5,6 +5,7 @@ const packets = @import("packets.zig");
 const codec = @import("codec.zig");
 const commands = @import("commands.zig");
 const mac_handlers = @import("handlers/mac_handlers.zig");
+const region_mod = @import("region.zig");
 const state_repository = @import("../repository/lorawan_state_repository.zig");
 const types = @import("types.zig");
 const Database = app_mod.Database;
@@ -194,7 +195,7 @@ pub const Service = struct {
 
         node.f_cnt_up = parsed.f_cnt;
         if (parsed.ack) clearPendingConfirmedDownlink(allocator, &node);
-        updateAdrObservations(&node, parsed.adr, rxpk);
+        updateAdrObservations(&node, network.region, parsed.adr, rxpk);
 
         var downlink: ?packets.DownlinkRequest = null;
         const response_commands = try codec.buildMacResponses(allocator, parsed, currentLinkMetrics(rxpk));
@@ -206,6 +207,7 @@ pub const Service = struct {
             node,
             network.rxwin_init,
             network.rx1_delay_s,
+            network.region,
             pending_commands,
         );
         defer allocator.free(network_commands);
@@ -238,7 +240,7 @@ pub const Service = struct {
 
         if (codec.collectMacCommands(allocator, parsed)) |status_commands| {
             defer allocator.free(status_commands);
-            const remaining_pending = try mac_handlers.applyToNode(allocator, &node, pending_commands, status_commands);
+            const remaining_pending = try mac_handlers.applyToNode(allocator, network.region, &node, pending_commands, status_commands);
             defer allocator.free(remaining_pending);
 
             if (node.pending_mac_commands) |value| {
@@ -414,9 +416,9 @@ fn selectClassADownlinkWindow(allocator: std.mem.Allocator, network: types.Netwo
 
 fn selectClassADownlinkWindowWithDelay(allocator: std.mem.Allocator, network: types.Network, rxpk: Rxpk, rxwin_use: types.RxWindowConfig, rx1_delay_override: ?u8) !SelectedClassAWindow {
     const rx1_delay_s = @as(u32, rx1_delay_override orelse @as(u8, @intCast(network.rx1_delay_s)));
-    if (try rx1DataRate(allocator, rxpk.datr, rxwin_use.rx1_dr_offset)) |datr| {
+    if (try rx1DataRate(network.region, allocator, rxpk.datr, rxwin_use.rx1_dr_offset)) |datr| {
         return .{
-            .freq = rxpk.freq,
+            .freq = region_mod.rx1DownlinkFrequency(network.region, rxpk.freq) orelse rxpk.freq,
             .datr = datr,
             .delay_s = rx1_delay_s,
         };
@@ -424,52 +426,17 @@ fn selectClassADownlinkWindowWithDelay(allocator: std.mem.Allocator, network: ty
 
     return .{
         .freq = rxwin_use.frequency,
-        .datr = try rx2DataRate(allocator, rxwin_use.rx2_data_rate),
+        .datr = try rx2DataRate(network.region, allocator, rxwin_use.rx2_data_rate),
         .delay_s = rx1_delay_s + 1,
     };
 }
 
-fn rx1DataRate(allocator: std.mem.Allocator, uplink_datr: packets.DataRate, rx1_dr_offset: u8) !?packets.DataRate {
-    const uplink_index = switch (uplink_datr) {
-        .lora => |value| (try loraDataRateIndex(value)) orelse return null,
-        .fsk => return null,
-    };
-    const downlink_index = uplink_index -| rx1_dr_offset;
-    return try loraDataRateFromIndex(allocator, downlink_index);
+fn rx1DataRate(region: types.Region, allocator: std.mem.Allocator, uplink_datr: packets.DataRate, rx1_dr_offset: u8) !?packets.DataRate {
+    return try region_mod.downlinkRx1DataRate(region, allocator, uplink_datr, rx1_dr_offset);
 }
 
-fn rx2DataRate(allocator: std.mem.Allocator, data_rate: u8) !packets.DataRate {
-    const lora = try loraDataRateName(data_rate);
-    return .{ .lora = try allocator.dupe(u8, lora) };
-}
-
-fn loraDataRateFromIndex(allocator: std.mem.Allocator, data_rate: u8) !packets.DataRate {
-    const lora = try loraDataRateName(data_rate);
-    return .{ .lora = try allocator.dupe(u8, lora) };
-}
-
-fn loraDataRateName(data_rate: u8) ![]const u8 {
-    return switch (data_rate) {
-        0 => "SF12BW125",
-        1 => "SF11BW125",
-        2 => "SF10BW125",
-        3 => "SF9BW125",
-        4 => "SF8BW125",
-        5 => "SF7BW125",
-        6 => "SF7BW250",
-        else => return error.UnsupportedRx2DataRate,
-    };
-}
-
-fn loraDataRateIndex(datr: []const u8) !?u8 {
-    if (std.mem.eql(u8, datr, "SF12BW125")) return 0;
-    if (std.mem.eql(u8, datr, "SF11BW125")) return 1;
-    if (std.mem.eql(u8, datr, "SF10BW125")) return 2;
-    if (std.mem.eql(u8, datr, "SF9BW125")) return 3;
-    if (std.mem.eql(u8, datr, "SF8BW125")) return 4;
-    if (std.mem.eql(u8, datr, "SF7BW125")) return 5;
-    if (std.mem.eql(u8, datr, "SF7BW250")) return 6;
-    return null;
+fn rx2DataRate(region: types.Region, allocator: std.mem.Allocator, data_rate: u8) !packets.DataRate {
+    return try region_mod.rx2DataRate(region, allocator, data_rate);
 }
 
 fn replacePendingConfirmedDownlink(allocator: std.mem.Allocator, node: *types.Node, phy_payload: []const u8, retries: u8) !void {
@@ -486,17 +453,14 @@ fn clearPendingConfirmedDownlink(allocator: std.mem.Allocator, node: *types.Node
     node.confirmed_downlink_retries = 0;
 }
 
-fn updateAdrObservations(node: *types.Node, adr_enabled: bool, rxpk: Rxpk) void {
+fn updateAdrObservations(node: *types.Node, region: types.Region, adr_enabled: bool, rxpk: Rxpk) void {
     if (!adr_enabled) {
         resetAdrObservationState(node);
         node.adr_last_data_rate = null;
         return;
     }
 
-    const data_rate = switch (rxpk.datr) {
-        .lora => |value| loraDataRateIndex(value) catch null,
-        .fsk => null,
-    } orelse {
+    const data_rate = region_mod.uplinkDataRateIndex(region, rxpk.datr) catch null orelse {
         resetAdrObservationState(node);
         node.adr_last_data_rate = null;
         return;
@@ -591,7 +555,7 @@ test "current link metrics derive LinkCheckAns margin from uplink lsnr" {
 
     const metrics = currentLinkMetrics(rxpk);
     try std.testing.expectEqual(@as(i64, 1234), metrics.rx_time_ms);
-    try std.testing.expectEqual(@as(u8, 15), metrics.margin);
+    try std.testing.expectEqual(@as(u8, 18), metrics.margin);
     try std.testing.expectEqual(@as(usize, 1), metrics.gateway_count);
 }
 
@@ -615,6 +579,7 @@ test "link check margin falls back to zero when data rate has no LoRa SNR floor"
 test "class A window respects node rx1 delay override" {
     const network = types.Network.init(
         try std.testing.allocator.dupe(u8, "public"),
+        .eu868,
         .{ 0x00, 0x00, 0x13 },
         try std.testing.allocator.dupe(u8, "4/5"),
         5,
@@ -648,9 +613,10 @@ test "class A window respects node rx1 delay override" {
     try std.testing.expectEqual(@as(f64, 868.1), selected.freq);
 }
 
-test "class A rx2 fallback uses overridden rx1 delay plus one second" {
+test "class A FSK uplink in EU868 can stay in RX1 with overridden delay" {
     const network = types.Network.init(
         try std.testing.allocator.dupe(u8, "public"),
+        .eu868,
         .{ 0x00, 0x00, 0x13 },
         try std.testing.allocator.dupe(u8, "4/5"),
         5,
@@ -680,6 +646,7 @@ test "class A rx2 fallback uses overridden rx1 delay plus one second" {
         .fsk => {},
     };
 
-    try std.testing.expectEqual(@as(u32, 5), selected.delay_s);
-    try std.testing.expectEqual(@as(f64, 869.525), selected.freq);
+    try std.testing.expectEqual(@as(u32, 4), selected.delay_s);
+    try std.testing.expectEqual(@as(f64, 868.1), selected.freq);
+    try std.testing.expectEqual(@as(u32, 50_000), selected.datr.fsk);
 }
