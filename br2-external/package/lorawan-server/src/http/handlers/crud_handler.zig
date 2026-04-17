@@ -120,7 +120,10 @@ fn createConflictMessage(comptime entity_name: []const u8) []const u8 {
 }
 
 fn deinitRecord(allocator: std.mem.Allocator, record: anytype) void {
-    if (@hasDecl(@TypeOf(record), "deinit")) record.deinit(allocator);
+    if (@hasDecl(@TypeOf(record), "deinit")) {
+        var mutable_record = record;
+        mutable_record.deinit(allocator);
+    }
 }
 
 fn deinitWriteInput(allocator: std.mem.Allocator, write_input: anytype) void {

@@ -8,6 +8,13 @@ pub const Level = enum {
 };
 
 var mutex: std.Thread.Mutex = .{};
+var min_level: Level = .info;
+
+pub fn setLevel(level: Level) void {
+    mutex.lock();
+    defer mutex.unlock();
+    min_level = level;
+}
 
 pub fn debug(scope: []const u8, event: []const u8, message: []const u8, fields: anytype) void {
     log(.debug, scope, event, message, fields);
@@ -28,6 +35,7 @@ pub fn err(scope: []const u8, event: []const u8, message: []const u8, fields: an
 fn log(level: Level, scope: []const u8, event: []const u8, message: []const u8, fields: anytype) void {
     mutex.lock();
     defer mutex.unlock();
+    if (@intFromEnum(level) < @intFromEnum(min_level)) return;
 
     const record = .{
         .ts_ms = std.time.milliTimestamp(),

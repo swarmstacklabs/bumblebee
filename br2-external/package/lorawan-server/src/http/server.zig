@@ -13,6 +13,8 @@ const services_mod = @import("services.zig");
 const frontend_handler = @import("handlers/frontend.zig");
 const health_handler = @import("handlers/health.zig");
 const devices_handler = @import("handlers/devices.zig");
+const gateways_handler = @import("handlers/gateways.zig");
+const networks_handler = @import("handlers/networks.zig");
 const connectors_handler = @import("handlers/connectors.zig");
 const system_resources_handler = @import("handlers/system_resources.zig");
 
@@ -38,6 +40,16 @@ const api_middlewares = [_]runtime.Middleware{
 
 const routes = [_]router_mod.Route{
     router_mod.Route.init(.GET, "/healthz", health_handler.handle, &.{}),
+    router_mod.Route.init(.GET, "/api/gateways", gateways_handler.list, &api_middlewares),
+    router_mod.Route.init(.POST, "/api/gateways", gateways_handler.create, &api_middlewares),
+    router_mod.Route.init(.GET, "/api/gateways/:id", gateways_handler.get, &api_middlewares),
+    router_mod.Route.init(.PUT, "/api/gateways/:id", gateways_handler.update, &api_middlewares),
+    router_mod.Route.init(.DELETE, "/api/gateways/:id", gateways_handler.delete, &api_middlewares),
+    router_mod.Route.init(.GET, "/api/networks", networks_handler.list, &api_middlewares),
+    router_mod.Route.init(.POST, "/api/networks", networks_handler.create, &api_middlewares),
+    router_mod.Route.init(.GET, "/api/networks/:id", networks_handler.get, &api_middlewares),
+    router_mod.Route.init(.PUT, "/api/networks/:id", networks_handler.update, &api_middlewares),
+    router_mod.Route.init(.DELETE, "/api/networks/:id", networks_handler.delete, &api_middlewares),
     router_mod.Route.init(.GET, "/api/devices", devices_handler.list, &api_middlewares),
     router_mod.Route.init(.POST, "/api/devices", devices_handler.create, &api_middlewares),
     router_mod.Route.init(.GET, "/api/devices/:id", devices_handler.get, &api_middlewares),

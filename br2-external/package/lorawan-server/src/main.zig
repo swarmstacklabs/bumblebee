@@ -12,6 +12,7 @@ pub fn main() !void {
 
     var runtime_config = try app_mod.Config.load(allocator);
     defer runtime_config.deinit();
+    logger.setLevel(runtime_config.log_level);
     runtime_config.logSummary();
 
     var app = try app_mod.App.init(allocator, runtime_config.db_path);

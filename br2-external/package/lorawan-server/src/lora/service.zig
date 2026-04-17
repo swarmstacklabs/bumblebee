@@ -6,6 +6,7 @@ const codec = @import("codec.zig");
 const commands = @import("commands.zig");
 const mac_handlers = @import("handlers/mac_handlers.zig");
 const mac_command_metrics_repository = @import("../repository/mac_command_metrics_repository.zig");
+const logger = @import("../logger.zig");
 const region_mod = @import("region.zig");
 const state_repository = @import("../repository/lorawan_state_repository.zig");
 const types = @import("types.zig");
@@ -48,17 +49,32 @@ pub const Service = struct {
         };
     }
 
-    pub fn ingestRxpk(self: Service, allocator: std.mem.Allocator, gateway_mac: [8]u8, rxpk: Rxpk) !?IngestResult {
-        const decoded = codec.decodeFrame(rxpk.data) catch return null;
+    pub fn ingestRxpk(self: *Service, allocator: std.mem.Allocator, gateway_mac: [8]u8, rxpk: Rxpk) !?IngestResult {
+        const decoded = codec.decodeFrame(rxpk.data) catch |err| {
+            logger.debug("lora", "uplink_decode_skipped", "ignored uplink payload that failed LoRaWAN frame decoding", .{
+                .gateway_mac = gateway_mac_hex(gateway_mac),
+                .error_name = @errorName(err),
+            });
+            return null;
+        };
 
         const gateway_hex = try state_repository.hexString(allocator, &gateway_mac);
         defer allocator.free(gateway_hex);
 
-        const gateway = (try self.state_repo.loadGateway(allocator, gateway_hex)) orelse return null;
+        const gateway = (try self.state_repo.loadGateway(allocator, gateway_hex)) orelse {
+            logger.debug("lora", "gateway_not_registered", "skipped LoRaWAN ingest because gateway is not registered", .{
+                .gateway_mac = gateway_mac_hex(gateway_mac),
+            });
+            return null;
+        };
         defer gateway.deinit(allocator);
 
         const network = blk: {
             if (try self.state_repo.loadNetworkByName(allocator, gateway.network_name)) |value| break :blk value;
+            logger.debug("lora", "network_not_found", "skipped LoRaWAN ingest because gateway network does not exist", .{
+                .gateway_mac = gateway_mac_hex(gateway_mac),
+                .network_name = gateway.network_name,
+            });
             return null;
         };
         defer network.deinit(allocator);
@@ -69,7 +85,7 @@ pub const Service = struct {
         };
     }
 
-    pub fn syncAcknowledgedDownlink(self: Service, allocator: std.mem.Allocator, pending_json: []const u8) !void {
+    pub fn syncAcknowledgedDownlink(self: *Service, allocator: std.mem.Allocator, pending_json: []const u8) !void {
         const phy_payload = try decodePendingPhyPayload(allocator, pending_json);
         defer allocator.free(phy_payload);
 
@@ -113,7 +129,7 @@ pub const Service = struct {
         try self.state_repo.upsertNode(allocator, node);
     }
 
-    fn handleJoinRequest(self: Service, allocator: std.mem.Allocator, gateway_mac: [8]u8, gateway: types.Gateway, network: types.Network, rxpk: Rxpk, join: types.JoinRequest) !?IngestResult {
+    fn handleJoinRequest(self: *Service, allocator: std.mem.Allocator, gateway_mac: [8]u8, gateway: types.Gateway, network: types.Network, rxpk: Rxpk, join: types.JoinRequest) !?IngestResult {
         var device = (try self.state_repo.findDeviceByDevEui(allocator, join.dev_eui)) orelse return null;
         defer device.deinit(allocator);
 
@@ -180,7 +196,7 @@ pub const Service = struct {
         };
     }
 
-    fn handleDataFrame(self: Service, allocator: std.mem.Allocator, gateway_mac: [8]u8, gateway: types.Gateway, network: types.Network, rxpk: Rxpk, frame: types.DataFrame) !?IngestResult {
+    fn handleDataFrame(self: *Service, allocator: std.mem.Allocator, gateway_mac: [8]u8, gateway: types.Gateway, network: types.Network, rxpk: Rxpk, frame: types.DataFrame) !?IngestResult {
         var node = (try self.state_repo.findNodeByDevAddr(allocator, frame.dev_addr)) orelse return null;
         defer node.deinit(allocator);
         if (!frame.is_uplink) return null;

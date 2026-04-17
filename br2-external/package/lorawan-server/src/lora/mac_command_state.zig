@@ -44,7 +44,7 @@ pub const MetricsOutcome = enum {
 };
 
 pub const MetricsCollector = struct {
-    const tag_count = std.meta.tags(commands.Command).len;
+    const tag_count = std.meta.fields(context_mod.CommandTag).len;
 
     entries: [tag_count]CommandMetrics = initEmptyEntries(),
 

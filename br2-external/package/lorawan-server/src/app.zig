@@ -10,6 +10,7 @@ pub const env_db_path = config.env_db_path;
 pub const env_admin_user = config.env_admin_user;
 pub const env_admin_pass = config.env_admin_pass;
 pub const env_frontend_path = config.env_frontend_path;
+pub const env_log_level = config.env_log_level;
 pub const AdminConfig = config.AdminConfig;
 pub const Config = config.Config;
 

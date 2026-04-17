@@ -166,11 +166,29 @@ fn handlePushData(context: *UdpPacketContext, version: u8, token: u16) !void {
         else => return,
     };
 
+    logger.debug("udp", "push_data_received", "received Semtech PUSH_DATA frame", .{
+        .gateway_mac = packets.gatewayMacHex(push.gateway_mac),
+        .rxpk_count = push.rxpk.items.len,
+        .has_stat = (push.stat != null),
+    });
+
     const registry = gateway_registry.Registry.init(context.server.app.database());
-    const lorawan_service = lora.service.Service.init(context.server.app.database());
+    var lorawan_service = lora.service.Service.init(context.server.app.database());
     try registry.touch(push.gateway_mac, version, &context.client_addr);
 
     for (push.rxpk.items) |rxpk| {
+        logger.debug("udp", "rxpk_ingest_started", "processing uplink frame from gateway", .{
+            .gateway_mac = packets.gatewayMacHex(push.gateway_mac),
+            .tmst = rxpk.tmst,
+            .freq = rxpk.freq,
+            .datr = switch (rxpk.datr) {
+                .lora => |value| value,
+                .fsk => "FSK",
+            },
+            .size = rxpk.size,
+            .payload_len = rxpk.data.len,
+        });
+
         const normalized_rxpk = try packets.encodeNormalizedRxpk(context.server.app.allocator, push.gateway_mac, rxpk);
         defer context.server.app.allocator.free(normalized_rxpk);
         try persistAndPublishEvent(context.server.app, registry, "gateway_rxpk", push.gateway_mac, normalized_rxpk);
@@ -186,6 +204,12 @@ fn handlePushData(context: *UdpPacketContext, version: u8, token: u16) !void {
         if (maybe_ingested) |ingested| {
             defer ingested.deinit(context.server.app.allocator);
 
+            logger.debug("udp", "lorawan_ingest_completed", "ingested LoRaWAN uplink and produced event", .{
+                .gateway_mac = packets.gatewayMacHex(push.gateway_mac),
+                .event_type = ingested.event_type,
+                .has_downlink = (ingested.downlink != null),
+            });
+
             try persistAndPublishEvent(context.server.app, registry, ingested.event_type, push.gateway_mac, ingested.event_json);
 
             if (ingested.downlink) |downlink| {
@@ -197,6 +221,10 @@ fn handlePushData(context: *UdpPacketContext, version: u8, token: u16) !void {
                     continue;
                 };
             }
+        } else {
+            logger.debug("udp", "lorawan_ingest_skipped", "rxpk was stored as gateway event but not accepted as LoRaWAN traffic", .{
+                .gateway_mac = packets.gatewayMacHex(push.gateway_mac),
+            });
         }
     }
 
@@ -256,7 +284,7 @@ fn handleTxAck(context: *UdpPacketContext, version: u8, token: u16) !void {
     const status = if (ack.error_name) |value| value else "NONE";
 
     if (runtime_matches and std.ascii.eqlIgnoreCase(status, "NONE") and runtime.?.pending_downlink_json != null) {
-        const lorawan_service = lora.service.Service.init(context.server.app.database());
+        var lorawan_service = lora.service.Service.init(context.server.app.database());
         try lorawan_service.syncAcknowledgedDownlink(context.server.app.allocator, runtime.?.pending_downlink_json.?);
     }
 

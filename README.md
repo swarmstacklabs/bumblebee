@@ -143,3 +143,80 @@ Verification:
 zig build in br2-external/package/lorawan-server/src
 zig test src/lorawan.zig in br2-external/package/lorawan-server/src
 The main residual risk is data-shape assumptions in src/lorawan/repository.zig (line 30): the new service expects network_json, gateway_json, and node_json fields such as netid, rxwin_init, and tx_rfch to exist or fall back cleanly. The next step should be porting the remaining profile/group/node policy logic and exposing CRUD for networks/nodes/gateways so the new package has explicit config instead of inferred JSON defaults.
+
+
+
+### LoRaWAN API quick setup (curl)
+
+If Basic auth is enabled, set credentials and use `-u "$API_USER:$API_PASS"` in each request.
+
+```bash
+API_BASE="http://127.0.0.1:8080"
+API_USER="admin"
+API_PASS="admin"
+```
+
+Create a network (required for LoRaWAN ingest):
+
+```bash
+curl -sS -u "$API_USER:$API_PASS" \
+  -H "Content-Type: application/json" \
+  -X POST "$API_BASE/api/networks" \
+  -d '{
+    "name": "eu-net",
+    "region": "EU868",
+    "netid": "000001",
+    "tx_codr": "4/5",
+    "join1_delay": 5,
+    "rx1_delay": 1,
+    "gw_power": 14,
+    "rxwin_init": {
+      "rx1_dr_offset": 0,
+      "rx2_data_rate": 0,
+      "frequency": 869.525
+    },
+    "cflist": [867.1, 867.3, 867.5]
+  }'
+```
+
+Register a gateway:
+
+```bash
+curl -sS -u "$API_USER:$API_PASS" \
+  -H "Content-Type: application/json" \
+  -X POST "$API_BASE/api/gateways" \
+  -d '{
+    "mac": "aabbccddeeff0011",
+    "name": "gw-1",
+    "network_name": "eu-net",
+    "tx_rfch": 0
+  }'
+```
+
+Register a device:
+
+```bash
+curl -sS -u "$API_USER:$API_PASS" \
+  -H "Content-Type: application/json" \
+  -X POST "$API_BASE/api/devices" \
+  -d '{
+    "name": "dev-1",
+    "dev_eui": "0011223344556677",
+    "app_eui": "8899aabbccddeeff",
+    "app_key": "00112233445566778899aabbccddeeff"
+  }'
+```
+
+Verify created entities:
+
+```bash
+curl -sS -u "$API_USER:$API_PASS" "$API_BASE/api/networks"
+curl -sS -u "$API_USER:$API_PASS" "$API_BASE/api/gateways"
+curl -sS -u "$API_USER:$API_PASS" "$API_BASE/api/devices"
+```
+
+For packet-level ingest logs from gateway/device traffic, start the server with:
+
+```bash
+LORAWAN_SERVER_LOG_LEVEL=debug
+```

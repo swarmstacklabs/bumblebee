@@ -12,6 +12,7 @@ pub const env_db_path = "LORAWAN_SERVER_DB_PATH";
 pub const env_admin_user = "LORAWAN_SERVER_ADMIN_USER";
 pub const env_admin_pass = "LORAWAN_SERVER_ADMIN_PASS";
 pub const env_frontend_path = "LORAWAN_SERVER_FRONTEND_PATH";
+pub const env_log_level = "LORAWAN_SERVER_LOG_LEVEL";
 
 pub const AdminConfig = struct {
     user: ?[]u8,
@@ -38,9 +39,10 @@ pub const Config = struct {
     http_port: u16,
     db_path: []u8,
     frontend_path: []u8,
+    log_level: logger.Level,
     admin: AdminConfig,
 
-    pub fn init(allocator: std.mem.Allocator, bind_address: []const u8, udp_port: u16, http_port: u16, db_path: []u8, frontend_path: []u8, admin: AdminConfig) Config {
+    pub fn init(allocator: std.mem.Allocator, bind_address: []const u8, udp_port: u16, http_port: u16, db_path: []u8, frontend_path: []u8, log_level: logger.Level, admin: AdminConfig) Config {
         return .{
             .allocator = allocator,
             .bind_address = bind_address,
@@ -48,6 +50,7 @@ pub const Config = struct {
             .http_port = http_port,
             .db_path = db_path,
             .frontend_path = frontend_path,
+            .log_level = log_level,
             .admin = admin,
         };
     }
@@ -73,6 +76,7 @@ pub const Config = struct {
             http_port,
             resolved_db_path,
             resolved_frontend_path,
+            .info,
             admin,
         );
     }
@@ -98,6 +102,7 @@ pub const Config = struct {
             try loadPortFromEnvMap(env_map, env_http_port, default_http_port),
             db_path,
             frontend_path,
+            try loadLogLevelFromEnvMap(env_map, env_log_level, .info),
             AdminConfig.init(
                 try loadOptionalStringFromEnvMap(allocator, env_map, env_admin_user),
                 try loadOptionalStringFromEnvMap(allocator, env_map, env_admin_pass),
@@ -131,6 +136,7 @@ pub const Config = struct {
             .db_path = self.db_path,
             .frontend_path = self.frontend_path,
             .bind_address = self.bind_address,
+            .log_level = @tagName(self.log_level),
             .admin_auth = if (self.admin.isConfigured()) "enabled" else "disabled",
         });
     }
@@ -156,6 +162,18 @@ fn loadPortFromEnvMap(env_map: *const std.process.EnvMap, name: []const u8, fall
     if (value.len == 0) return fallback;
 
     return std.fmt.parseInt(u16, value, 10);
+}
+
+fn loadLogLevelFromEnvMap(env_map: *const std.process.EnvMap, name: []const u8, fallback: logger.Level) !logger.Level {
+    const raw = env_map.get(name) orelse return fallback;
+    const value = std.mem.trim(u8, raw, " \t\r\n");
+    if (value.len == 0) return fallback;
+
+    if (std.ascii.eqlIgnoreCase(value, "debug")) return .debug;
+    if (std.ascii.eqlIgnoreCase(value, "info")) return .info;
+    if (std.ascii.eqlIgnoreCase(value, "warn")) return .warn;
+    if (std.ascii.eqlIgnoreCase(value, "error") or std.ascii.eqlIgnoreCase(value, "err")) return .err;
+    return error.InvalidLogLevel;
 }
 
 fn loadOwnedStringFromEnvMap(allocator: std.mem.Allocator, env_map: *const std.process.EnvMap, name: []const u8, fallback: []const u8) ![]u8 {
@@ -209,6 +227,7 @@ test "validate accepts config even when frontend root is missing" {
         default_http_port,
         try std.testing.allocator.dupe(u8, "data/test.db"),
         try std.testing.allocator.dupe(u8, frontend_path),
+        .info,
         AdminConfig.init(null, null),
     );
     defer cfg.deinit();
