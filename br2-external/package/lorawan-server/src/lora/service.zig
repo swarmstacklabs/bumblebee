@@ -5,6 +5,7 @@ const packets = @import("packets.zig");
 const codec = @import("codec.zig");
 const commands = @import("commands.zig");
 const mac_handlers = @import("handlers/mac_handlers.zig");
+const mac_command_metrics_repository = @import("../repository/mac_command_metrics_repository.zig");
 const region_mod = @import("region.zig");
 const state_repository = @import("../repository/lorawan_state_repository.zig");
 const types = @import("types.zig");
@@ -38,10 +39,12 @@ pub const IngestResult = struct {
 
 pub const Service = struct {
     state_repo: state_repository.Repository,
+    metrics_repo: mac_command_metrics_repository.Repository,
 
     pub fn init(db: Database) Service {
         return .{
             .state_repo = state_repository.Repository.init(db),
+            .metrics_repo = mac_command_metrics_repository.Repository.init(db),
         };
     }
 
@@ -198,7 +201,7 @@ pub const Service = struct {
         updateAdrObservations(&node, network.region, parsed.adr, rxpk);
 
         var downlink: ?packets.DownlinkRequest = null;
-        const response_commands = try codec.buildMacResponses(allocator, parsed, currentLinkMetrics(rxpk));
+        const response_commands = try codec.buildMacResponsesWithMetrics(allocator, parsed, currentLinkMetrics(rxpk), &self.metrics_repo);
         defer allocator.free(response_commands);
         const pending_commands = try parsePendingCommands(allocator, node.pending_mac_commands);
         defer allocator.free(pending_commands);

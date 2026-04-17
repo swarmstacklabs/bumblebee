@@ -11,6 +11,7 @@ const router = @import("http/router.zig");
 const runtime = @import("http/runtime.zig");
 const services = @import("http/services.zig");
 const event_repository = @import("repository/event_repository.zig");
+const mac_command_metrics_repository = @import("repository/mac_command_metrics_repository.zig");
 const device_repository = @import("repository/device_repository.zig");
 const gateway_repository = @import("repository/gateway_repository.zig");
 const lorawan_state_repository = @import("repository/lorawan_state_repository.zig");
@@ -54,6 +55,7 @@ test "checked structs declare init and deinit" {
 
         expectInitDeinit(device_repository.Repository, "device_repository.Repository");
         expectInitDeinit(event_repository.Repository, "event_repository.Repository");
+        expectInitDeinit(mac_command_metrics_repository.Repository, "mac_command_metrics_repository.Repository");
         expectInitDeinit(gateway_repository.GatewayTarget, "gateway_repository.GatewayTarget");
         expectInitDeinit(gateway_repository.RuntimeRecord, "gateway_repository.RuntimeRecord");
         expectInitDeinit(gateway_repository.Repository, "gateway_repository.Repository");

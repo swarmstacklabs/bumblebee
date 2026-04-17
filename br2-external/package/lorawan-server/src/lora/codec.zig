@@ -1,6 +1,7 @@
 const std = @import("std");
 const commands = @import("commands.zig");
 const mac_handlers = @import("handlers/mac_handlers.zig");
+const metrics_repository = @import("../repository/mac_command_metrics_repository.zig");
 const types = @import("types.zig");
 
 const Aes128 = std.crypto.core.aes.Aes128;
@@ -304,9 +305,18 @@ pub fn buildMacResponses(
     parsed: types.ParsedDataFrame,
     link_metrics: mac_handlers.LinkMetrics,
 ) ![]commands.Command {
+    return buildMacResponsesWithMetrics(allocator, parsed, link_metrics, null);
+}
+
+pub fn buildMacResponsesWithMetrics(
+    allocator: std.mem.Allocator,
+    parsed: types.ParsedDataFrame,
+    link_metrics: mac_handlers.LinkMetrics,
+    metrics_repo: ?*metrics_repository.Repository,
+) ![]commands.Command {
     const incoming = try collectMacCommands(allocator, parsed);
     defer allocator.free(incoming);
-    return mac_handlers.buildResponses(allocator, incoming, link_metrics);
+    return mac_handlers.buildResponsesWithMetrics(allocator, incoming, link_metrics, metrics_repo);
 }
 
 pub fn fullFCnt(previous: ?u32, next16: u16) u32 {

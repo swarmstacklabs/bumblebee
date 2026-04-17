@@ -427,6 +427,17 @@ const migration_v3_sql =
     ");" ++
     "CREATE INDEX IF NOT EXISTS idx_connectors_enabled ON connectors(enabled);";
 
+const migration_v4_sql =
+    "CREATE TABLE IF NOT EXISTS mac_command_metrics (" ++
+    "id INTEGER PRIMARY KEY AUTOINCREMENT, " ++
+    "command_tag TEXT NOT NULL, " ++
+    "outcome TEXT NOT NULL, " ++
+    "latency_ns INTEGER NOT NULL, " ++
+    "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" ++
+    ");" ++
+    "CREATE INDEX IF NOT EXISTS idx_mac_command_metrics_tag_created_at ON mac_command_metrics(command_tag, created_at);" ++
+    "CREATE INDEX IF NOT EXISTS idx_mac_command_metrics_created_at ON mac_command_metrics(created_at);";
+
 const migrations = [_]Migration{
     .{
         .version = 1,
@@ -442,6 +453,11 @@ const migrations = [_]Migration{
         .version = 3,
         .name = "connectors_runtime_table",
         .sql = migration_v3_sql,
+    },
+    .{
+        .version = 4,
+        .name = "mac_command_metrics_table",
+        .sql = migration_v4_sql,
     },
 };
 

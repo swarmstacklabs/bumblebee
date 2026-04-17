@@ -8,6 +8,8 @@ const mac_command_logger_middleware = @import("../middleware/mac_command_logger.
 const node_context_guard_middleware = @import("../middleware/node_context_guard.zig");
 const mac_command_validator_middleware = @import("../middleware/mac_command_validator.zig");
 const ack_correlation_middleware = @import("../middleware/ack_correlation.zig");
+const metrics_collector_middleware = @import("../middleware/metrics_collector.zig");
+const metrics_repository = @import("../../repository/mac_command_metrics_repository.zig");
 const router_mod = @import("../router.zig");
 const types = @import("../types.zig");
 const runtime = @import("../runtime.zig");
@@ -29,6 +31,7 @@ const routes = [_]router_mod.Route{
 
 const global_middlewares = [_]runtime.Middleware{
     runtime.Middleware.init("mac_command_logger", mac_command_logger_middleware.middleware),
+    runtime.Middleware.init("metrics_collector", metrics_collector_middleware.middleware),
     runtime.Middleware.init("mac_command_validator", mac_command_validator_middleware.middleware),
     runtime.Middleware.init("node_context_guard", node_context_guard_middleware.middleware),
     runtime.Middleware.init("ack_correlation", ack_correlation_middleware.middleware),
@@ -44,6 +47,15 @@ pub const LinkMetrics = struct {
 };
 
 pub fn buildResponses(allocator: std.mem.Allocator, incoming: []const commands.Command, link_metrics: LinkMetrics) ![]commands.Command {
+    return buildResponsesWithMetrics(allocator, incoming, link_metrics, null);
+}
+
+pub fn buildResponsesWithMetrics(
+    allocator: std.mem.Allocator,
+    incoming: []const commands.Command,
+    link_metrics: LinkMetrics,
+    metrics_repo: ?*metrics_repository.Repository,
+) ![]commands.Command {
     var ctx = context_mod.Context.init(allocator);
     defer ctx.deinit();
 
@@ -53,6 +65,7 @@ pub fn buildResponses(allocator: std.mem.Allocator, incoming: []const commands.C
         .rx_time_ms = link_metrics.rx_time_ms,
         .link_margin = link_metrics.margin,
         .gateway_count = link_metrics.gateway_count,
+        .metrics_repo = metrics_repo,
     };
     ctx.setUserData(&state);
 
@@ -615,6 +628,39 @@ test "node context guard rejects node update command when pending state is not i
         .duty_cycle_ans,
     };
     try std.testing.expectError(error.MissingMacCommandPendingState, dispatchIgnoringMissing(&ctx, &incoming));
+}
+
+test "metrics collector tracks per-command success failure and latency" {
+    var ctx = context_mod.Context.init(std.testing.allocator);
+    defer ctx.deinit();
+
+    var collector = mac_command_state.MetricsCollector{};
+    var state = State{
+        .allocator = std.testing.allocator,
+        .mode = .response,
+        .metrics_collector = &collector,
+    };
+    defer state.remaining_pending.deinit(std.testing.allocator);
+    ctx.setUserData(&state);
+
+    const incoming = [_]commands.Command{
+        .device_time_req,
+        .{ .dev_status_ans = .{ .battery = 99, .margin = 32 } },
+    };
+
+    try std.testing.expectError(error.MalformedMacCommandPayload, dispatchIgnoringMissing(&ctx, &incoming));
+
+    const device_time_metrics = collector.metricsForTag(.device_time_req);
+    try std.testing.expectEqual(@as(u64, 1), device_time_metrics.success_count);
+    try std.testing.expectEqual(@as(u64, 0), device_time_metrics.failure_count);
+    try std.testing.expect(device_time_metrics.min_latency_ns != null);
+    try std.testing.expect(device_time_metrics.total_latency_ns >= device_time_metrics.min_latency_ns.?);
+
+    const dev_status_metrics = collector.metricsForTag(.dev_status_ans);
+    try std.testing.expectEqual(@as(u64, 0), dev_status_metrics.success_count);
+    try std.testing.expectEqual(@as(u64, 1), dev_status_metrics.failure_count);
+    try std.testing.expect(dev_status_metrics.min_latency_ns != null);
+    try std.testing.expect(dev_status_metrics.total_latency_ns >= dev_status_metrics.min_latency_ns.?);
 }
 
 test "mac command handlers build network-originated commands from node policy" {

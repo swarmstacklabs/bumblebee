@@ -2,6 +2,7 @@ const std = @import("std");
 
 const commands = @import("commands.zig");
 const context_mod = @import("context.zig");
+const metrics_repository = @import("../repository/mac_command_metrics_repository.zig");
 const types = @import("types.zig");
 
 pub const Mode = enum {
@@ -22,6 +23,58 @@ pub const State = struct {
     pending_index: usize = 0,
     remaining_pending: std.ArrayListUnmanaged(commands.Command) = .{},
     correlated_pending: ?commands.Command = null,
+    metrics_collector: ?*MetricsCollector = null,
+    metrics_repo: ?*metrics_repository.Repository = null,
+};
+
+pub const CommandMetrics = struct {
+    success_count: u64 = 0,
+    failure_count: u64 = 0,
+    total_latency_ns: u64 = 0,
+    min_latency_ns: ?u64 = null,
+    max_latency_ns: u64 = 0,
+};
+
+pub const MetricsOutcome = enum {
+    success,
+    failure,
+};
+
+pub const MetricsCollector = struct {
+    const tag_count = std.meta.tags(commands.Command).len;
+
+    entries: [tag_count]CommandMetrics = initEmptyEntries(),
+
+    pub fn observe(self: *MetricsCollector, tag: context_mod.CommandTag, outcome: MetricsOutcome, latency_ns: u64) void {
+        var entry = &self.entries[tagIndex(tag)];
+        switch (outcome) {
+            .success => entry.success_count += 1,
+            .failure => entry.failure_count += 1,
+        }
+        entry.total_latency_ns += latency_ns;
+        if (entry.min_latency_ns == null or latency_ns < entry.min_latency_ns.?) {
+            entry.min_latency_ns = latency_ns;
+        }
+        if (latency_ns > entry.max_latency_ns) {
+            entry.max_latency_ns = latency_ns;
+        }
+    }
+
+    pub fn metricsForTag(self: *const MetricsCollector, tag: context_mod.CommandTag) CommandMetrics {
+        return self.entries[tagIndex(tag)];
+    }
+
+    fn tagIndex(tag: context_mod.CommandTag) usize {
+        return @intFromEnum(tag);
+    }
+
+    fn initEmptyEntries() [tag_count]CommandMetrics {
+        var entries: [tag_count]CommandMetrics = undefined;
+        for (&entries) |*entry| {
+            entry.* = .{};
+        }
+        return entries;
+    }
 };
 
 pub fn requiresNode(tag: context_mod.CommandTag) bool {
