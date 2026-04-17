@@ -185,7 +185,7 @@ fn handlePushData(context: *UdpPacketContext, version: u8, token: u16) !void {
                 .lora => |value| value,
                 .fsk => "FSK",
             },
-            .size = rxpk.size,
+            .size = rxpk.data.len,
             .payload_len = rxpk.data.len,
         });
 
