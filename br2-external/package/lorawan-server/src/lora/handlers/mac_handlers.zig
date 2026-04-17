@@ -4,6 +4,7 @@ const commands = @import("../commands.zig");
 const context_mod = @import("../context.zig");
 const dispatcher_mod = @import("../dispatcher.zig");
 const mac_command_state = @import("../mac_command_state.zig");
+const error_mapper_middleware = @import("../middleware/error_mapper.zig");
 const mac_command_logger_middleware = @import("../middleware/mac_command_logger.zig");
 const node_context_guard_middleware = @import("../middleware/node_context_guard.zig");
 const mac_command_validator_middleware = @import("../middleware/mac_command_validator.zig");
@@ -32,6 +33,7 @@ const routes = [_]router_mod.Route{
 
 const global_middlewares = [_]runtime.Middleware{
     runtime.Middleware.init("mac_command_logger", mac_command_logger_middleware.middleware),
+    runtime.Middleware.init("error_mapper", error_mapper_middleware.middleware),
     runtime.Middleware.init("metrics_collector", metrics_collector_middleware.middleware),
     runtime.Middleware.init("mac_command_validator", mac_command_validator_middleware.middleware),
     runtime.Middleware.init("node_context_guard", node_context_guard_middleware.middleware),
@@ -582,7 +584,7 @@ test "mac command handlers reject malformed command payloads" {
         .{ .dev_status_ans = .{ .battery = 255, .margin = 32 } },
     };
 
-    try std.testing.expectError(error.MalformedMacCommandPayload, buildResponses(std.testing.allocator, &incoming, .{
+    try std.testing.expectError(error.MacCommandInvalidInput, buildResponses(std.testing.allocator, &incoming, .{
         .rx_time_ms = null,
         .margin = 0,
         .gateway_count = 1,
@@ -608,7 +610,7 @@ test "node context guard rejects node update command when node is missing" {
     const incoming = [_]commands.Command{
         .duty_cycle_ans,
     };
-    try std.testing.expectError(error.MissingMacCommandNodeContext, dispatchIgnoringMissing(&ctx, &incoming));
+    try std.testing.expectError(error.MacCommandContextMissing, dispatchIgnoringMissing(&ctx, &incoming));
 }
 
 test "node context guard rejects node update command when pending state is not initialized" {
@@ -630,7 +632,7 @@ test "node context guard rejects node update command when pending state is not i
     const incoming = [_]commands.Command{
         .duty_cycle_ans,
     };
-    try std.testing.expectError(error.MissingMacCommandPendingState, dispatchIgnoringMissing(&ctx, &incoming));
+    try std.testing.expectError(error.MacCommandContextMissing, dispatchIgnoringMissing(&ctx, &incoming));
 }
 
 test "metrics collector tracks per-command success failure and latency" {
@@ -651,7 +653,7 @@ test "metrics collector tracks per-command success failure and latency" {
         .{ .dev_status_ans = .{ .battery = 99, .margin = 32 } },
     };
 
-    try std.testing.expectError(error.MalformedMacCommandPayload, dispatchIgnoringMissing(&ctx, &incoming));
+    try std.testing.expectError(error.MacCommandInvalidInput, dispatchIgnoringMissing(&ctx, &incoming));
 
     const device_time_metrics = collector.metricsForTag(.device_time_req);
     try std.testing.expectEqual(@as(u64, 1), device_time_metrics.success_count);
@@ -809,7 +811,7 @@ test "mac command handlers reject unmatched answer command" {
     defer node.deinit(std.testing.allocator);
 
     try std.testing.expectError(
-        error.UnmatchedMacCommandAnswer,
+        error.MacCommandCorrelationFailed,
         applyToNode(
             std.testing.allocator,
             .eu868,
