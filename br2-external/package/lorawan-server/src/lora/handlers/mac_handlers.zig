@@ -8,6 +8,7 @@ const mac_command_logger_middleware = @import("../middleware/mac_command_logger.
 const node_context_guard_middleware = @import("../middleware/node_context_guard.zig");
 const mac_command_validator_middleware = @import("../middleware/mac_command_validator.zig");
 const ack_correlation_middleware = @import("../middleware/ack_correlation.zig");
+const idempotency_or_replay_guard_middleware = @import("../middleware/idempotency_or_replay_guard.zig");
 const metrics_collector_middleware = @import("../middleware/metrics_collector.zig");
 const metrics_repository = @import("../../repository/mac_command_metrics_repository.zig");
 const router_mod = @import("../router.zig");
@@ -34,6 +35,7 @@ const global_middlewares = [_]runtime.Middleware{
     runtime.Middleware.init("metrics_collector", metrics_collector_middleware.middleware),
     runtime.Middleware.init("mac_command_validator", mac_command_validator_middleware.middleware),
     runtime.Middleware.init("node_context_guard", node_context_guard_middleware.middleware),
+    runtime.Middleware.init("idempotency_or_replay_guard", idempotency_or_replay_guard_middleware.middleware),
     runtime.Middleware.init("ack_correlation", ack_correlation_middleware.middleware),
 };
 
@@ -350,6 +352,7 @@ pub fn applyToNode(allocator: std.mem.Allocator, region: types.Region, node: *ty
         .pending_state_ready = true,
     };
     defer state.remaining_pending.deinit(allocator);
+    defer state.processed_uplink_commands.deinit(allocator);
     ctx.setUserData(&state);
 
     try dispatchIgnoringMissing(&ctx, incoming);
@@ -819,6 +822,23 @@ test "mac command handlers reject unmatched answer command" {
             },
         ),
     );
+}
+
+test "mac command handlers skip duplicate uplink answer replay" {
+    var node = types.Node.init([_]u8{ 1, 2, 3, 4 }, [_]u8{0} ** 16, [_]u8{0} ** 16, .{}, .{ .tx_power = 1, .data_rate = 0 });
+    defer node.deinit(std.testing.allocator);
+
+    const remaining = try applyToNode(std.testing.allocator, .eu868, &node, &[_]commands.Command{
+        .{ .link_adr_req = .{ .data_rate = 5, .tx_power = 7, .channel_mask = 0x0007, .ch_mask_cntl = 0, .nb_rep = 1 } },
+    }, &[_]commands.Command{
+        .{ .link_adr_ans = .{ .power_ack = true, .data_rate_ack = true, .channel_mask_ack = true } },
+        .{ .link_adr_ans = .{ .power_ack = true, .data_rate_ack = true, .channel_mask_ack = true } },
+    });
+    defer std.testing.allocator.free(remaining);
+
+    try std.testing.expectEqual(@as(usize, 0), remaining.len);
+    try std.testing.expectEqual(@as(i32, 7), node.adr_use.tx_power);
+    try std.testing.expectEqual(@as(u8, 5), node.adr_use.data_rate);
 }
 
 test "mac command handlers persist channel plan state" {

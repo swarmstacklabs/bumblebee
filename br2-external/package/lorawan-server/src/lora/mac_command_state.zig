@@ -5,6 +5,8 @@ const context_mod = @import("context.zig");
 const metrics_repository = @import("../repository/mac_command_metrics_repository.zig");
 const types = @import("types.zig");
 
+pub const Command = commands.Command;
+
 pub const Mode = enum {
     response,
     node_update,
@@ -23,6 +25,7 @@ pub const State = struct {
     pending_index: usize = 0,
     remaining_pending: std.ArrayListUnmanaged(commands.Command) = .{},
     correlated_pending: ?commands.Command = null,
+    processed_uplink_commands: std.ArrayListUnmanaged(commands.Command) = .{},
     metrics_collector: ?*MetricsCollector = null,
     metrics_repo: ?*metrics_repository.Repository = null,
 };
