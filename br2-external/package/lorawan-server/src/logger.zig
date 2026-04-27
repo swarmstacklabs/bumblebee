@@ -16,6 +16,12 @@ pub fn setLevel(level: Level) void {
     min_level = level;
 }
 
+pub fn currentLevel() Level {
+    mutex.lock();
+    defer mutex.unlock();
+    return min_level;
+}
+
 pub fn debug(scope: []const u8, event: []const u8, message: []const u8, fields: anytype) void {
     log(.debug, scope, event, message, fields);
 }

@@ -438,6 +438,24 @@ const migration_v4_sql =
     "CREATE INDEX IF NOT EXISTS idx_mac_command_metrics_tag_created_at ON mac_command_metrics(command_tag, created_at);" ++
     "CREATE INDEX IF NOT EXISTS idx_mac_command_metrics_created_at ON mac_command_metrics(created_at);";
 
+const migration_v5_sql =
+    "ALTER TABLE mac_command_metrics ADD COLUMN level TEXT NOT NULL DEFAULT 'debug';" ++
+    "CREATE INDEX IF NOT EXISTS idx_mac_command_metrics_level_created_at ON mac_command_metrics(level, created_at);";
+
+const migration_v6_sql =
+    "CREATE TABLE IF NOT EXISTS http_request_metrics (" ++
+    "id INTEGER PRIMARY KEY AUTOINCREMENT, " ++
+    "method TEXT NOT NULL, " ++
+    "path TEXT NOT NULL, " ++
+    "status_code INTEGER NOT NULL, " ++
+    "level TEXT NOT NULL, " ++
+    "latency_ns INTEGER NOT NULL, " ++
+    "created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP" ++
+    ");" ++
+    "CREATE INDEX IF NOT EXISTS idx_http_request_metrics_status_created_at ON http_request_metrics(status_code, created_at);" ++
+    "CREATE INDEX IF NOT EXISTS idx_http_request_metrics_level_created_at ON http_request_metrics(level, created_at);" ++
+    "CREATE INDEX IF NOT EXISTS idx_http_request_metrics_created_at ON http_request_metrics(created_at);";
+
 const migrations = [_]Migration{
     .{
         .version = 1,
@@ -458,6 +476,16 @@ const migrations = [_]Migration{
         .version = 4,
         .name = "mac_command_metrics_table",
         .sql = migration_v4_sql,
+    },
+    .{
+        .version = 5,
+        .name = "mac_command_metrics_level",
+        .sql = migration_v5_sql,
+    },
+    .{
+        .version = 6,
+        .name = "http_request_metrics_table",
+        .sql = migration_v6_sql,
     },
 };
 

@@ -2,6 +2,7 @@ const std = @import("std");
 
 const commands = @import("commands.zig");
 const context_mod = @import("context.zig");
+const logger = @import("../logger.zig");
 const metrics_repository = @import("../repository/mac_command_metrics_repository.zig");
 const types = @import("types.zig");
 
@@ -28,6 +29,7 @@ pub const State = struct {
     processed_uplink_commands: std.ArrayListUnmanaged(commands.Command) = .{},
     metrics_collector: ?*MetricsCollector = null,
     metrics_repo: ?*metrics_repository.Repository = null,
+    metrics_min_level: logger.Level = .info,
 };
 
 pub const CommandMetrics = struct {

@@ -12,6 +12,7 @@ const ack_correlation_middleware = @import("../middleware/ack_correlation.zig");
 const idempotency_or_replay_guard_middleware = @import("../middleware/idempotency_or_replay_guard.zig");
 const metrics_collector_middleware = @import("../middleware/metrics_collector.zig");
 const metrics_repository = @import("../../repository/mac_command_metrics_repository.zig");
+const logger = @import("../../logger.zig");
 const router_mod = @import("../router.zig");
 const types = @import("../types.zig");
 const runtime = @import("../runtime.zig");
@@ -70,6 +71,7 @@ pub fn buildResponsesWithMetrics(
         .link_margin = link_metrics.margin,
         .gateway_count = link_metrics.gateway_count,
         .metrics_repo = metrics_repo,
+        .metrics_min_level = logger.currentLevel(),
     };
     ctx.setUserData(&state);
 
@@ -644,6 +646,7 @@ test "metrics collector tracks per-command success failure and latency" {
         .allocator = std.testing.allocator,
         .mode = .response,
         .metrics_collector = &collector,
+        .metrics_min_level = .debug,
     };
     defer state.remaining_pending.deinit(std.testing.allocator);
     ctx.setUserData(&state);
@@ -666,6 +669,53 @@ test "metrics collector tracks per-command success failure and latency" {
     try std.testing.expectEqual(@as(u64, 1), dev_status_metrics.failure_count);
     try std.testing.expect(dev_status_metrics.min_latency_ns != null);
     try std.testing.expect(dev_status_metrics.total_latency_ns >= dev_status_metrics.min_latency_ns.?);
+}
+
+test "metrics collector filters debug successes at info level but keeps anomalies" {
+    var ctx = context_mod.Context.init(std.testing.allocator);
+    defer ctx.deinit();
+
+    var collector = mac_command_state.MetricsCollector{};
+    var state = State{
+        .allocator = std.testing.allocator,
+        .mode = .response,
+        .metrics_collector = &collector,
+        .metrics_min_level = .info,
+    };
+    defer state.remaining_pending.deinit(std.testing.allocator);
+    ctx.setUserData(&state);
+
+    const incoming = [_]commands.Command{
+        .device_time_req,
+        .{ .link_adr_ans = .{ .power_ack = true, .data_rate_ack = false, .channel_mask_ack = true } },
+    };
+
+    try dispatchIgnoringMissing(&ctx, &incoming);
+
+    try std.testing.expectEqual(@as(u64, 0), collector.metricsForTag(.device_time_req).success_count);
+    try std.testing.expectEqual(@as(u64, 1), collector.metricsForTag(.link_adr_ans).success_count);
+}
+
+test "metrics collector keeps failures at info level" {
+    var ctx = context_mod.Context.init(std.testing.allocator);
+    defer ctx.deinit();
+
+    var collector = mac_command_state.MetricsCollector{};
+    var state = State{
+        .allocator = std.testing.allocator,
+        .mode = .response,
+        .metrics_collector = &collector,
+        .metrics_min_level = .info,
+    };
+    defer state.remaining_pending.deinit(std.testing.allocator);
+    ctx.setUserData(&state);
+
+    const incoming = [_]commands.Command{
+        .{ .dev_status_ans = .{ .battery = 99, .margin = 32 } },
+    };
+
+    try std.testing.expectError(error.MacCommandInvalidInput, dispatchIgnoringMissing(&ctx, &incoming));
+    try std.testing.expectEqual(@as(u64, 1), collector.metricsForTag(.dev_status_ans).failure_count);
 }
 
 test "mac command handlers build network-originated commands from node policy" {
