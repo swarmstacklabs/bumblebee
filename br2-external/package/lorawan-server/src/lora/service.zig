@@ -130,15 +130,53 @@ pub const Service = struct {
     }
 
     fn handleJoinRequest(self: *Service, allocator: std.mem.Allocator, gateway_mac: [8]u8, gateway: types.Gateway, network: types.Network, rxpk: Rxpk, join: types.JoinRequest) !?IngestResult {
-        var device = (try self.state_repo.findDeviceByDevEui(allocator, join.dev_eui)) orelse return null;
+        var device = (try self.state_repo.findDeviceByDevEui(allocator, join.dev_eui)) orelse {
+            logger.debug("lora", "join_rejected_device_not_found", "rejected join request because dev_eui is not registered", .{
+                .gateway_mac = gateway_mac_hex(gateway_mac),
+                .dev_eui = join.dev_eui,
+                .app_eui = join.app_eui,
+            });
+            return null;
+        };
         defer device.deinit(allocator);
 
-        if (!std.mem.eql(u8, &device.app_eui, &join.app_eui)) return null;
-        if (!codec.verifyJoinRequest(rxpk.data, device.app_key)) return null;
+        if (!std.mem.eql(u8, &device.app_eui, &join.app_eui)) {
+            logger.debug("lora", "join_rejected_app_eui_mismatch", "rejected join request because app_eui does not match registered device", .{
+                .gateway_mac = gateway_mac_hex(gateway_mac),
+                .dev_eui = join.dev_eui,
+                .received_app_eui = join.app_eui,
+                .configured_app_eui = device.app_eui,
+                .device_id = device.id,
+            });
+            return null;
+        }
+        if (!codec.verifyJoinRequest(rxpk.data, device.app_key)) {
+            logger.debug("lora", "join_rejected_mic_invalid", "rejected join request because MIC verification failed", .{
+                .gateway_mac = gateway_mac_hex(gateway_mac),
+                .dev_eui = join.dev_eui,
+                .device_id = device.id,
+            });
+            return null;
+        }
         const dev_nonce = std.mem.readInt(u16, &join.dev_nonce, .little);
-        if (containsDevNonce(device.used_dev_nonces, dev_nonce)) return null;
+        if (containsDevNonce(device.used_dev_nonces, dev_nonce)) {
+            logger.debug("lora", "join_rejected_dev_nonce_replay", "rejected join request because dev_nonce was already used", .{
+                .gateway_mac = gateway_mac_hex(gateway_mac),
+                .dev_eui = join.dev_eui,
+                .dev_nonce = dev_nonce,
+                .device_id = device.id,
+            });
+            return null;
+        }
 
-        const app_nonce = allocateAppNonce(&device) orelse return null;
+        const app_nonce = allocateAppNonce(&device) orelse {
+            logger.debug("lora", "join_rejected_app_nonce_exhausted", "rejected join request because app nonce space is exhausted", .{
+                .gateway_mac = gateway_mac_hex(gateway_mac),
+                .dev_eui = join.dev_eui,
+                .device_id = device.id,
+            });
+            return null;
+        };
         const session = codec.deriveSessionKeys(device.app_key, app_nonce, network.net_id, join.dev_nonce);
 
         const dev_addr = device.dev_addr_hint orelse try randomDevAddr(network.net_id);

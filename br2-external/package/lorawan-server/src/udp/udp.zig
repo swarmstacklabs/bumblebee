@@ -108,11 +108,16 @@ pub fn handleDatagram(
 fn handleUdpPacket(context: *UdpPacketContext) !void {
     const port = std.mem.bigToNative(u16, context.client_addr.port);
     const ip = @as([4]u8, @bitCast(context.client_addr.addr));
+    const has_semtech_header = context.msg.len >= 4;
 
     logger.debug("udp", "packet_received", "udp packet received", .{
         .bytes = context.msg.len,
         .peer_ip = ip,
         .peer_port = port,
+        .has_semtech_header = has_semtech_header,
+        .version = if (has_semtech_header) context.msg[0] else @as(?u8, null),
+        .token = if (has_semtech_header) std.mem.readInt(u16, context.msg[1..3], .big) else @as(?u16, null),
+        .ident = if (has_semtech_header) context.msg[3] else @as(?u8, null),
     });
 
     if (context.msg.len < 4) {
@@ -246,6 +251,19 @@ fn handlePullData(context: *UdpPacketContext, version: u8, token: u16) !void {
     try sendAck(&context.server.socket, &context.client_addr, context.client_len, version, token, packets.pull_ack_ident);
     const registry = gateway_registry.Registry.init(context.server.app.database());
     try registry.rememberPullTarget(gateway_mac, version, &context.client_addr);
+    logger.debug("udp", "pull_data_received", "received Semtech PULL_DATA frame", .{
+        .gateway_mac = packets.gatewayMacHex(gateway_mac),
+        .token = token,
+        .version = version,
+    });
+
+    const pull_event = try std.json.Stringify.valueAlloc(context.server.app.allocator, .{
+        .gateway_mac = packets.gatewayMacHex(gateway_mac),
+        .token = token,
+        .version = version,
+    }, .{});
+    defer context.server.app.allocator.free(pull_event);
+    try persistAndPublishEvent(context.server.app, registry, "gateway_pull_data", gateway_mac, pull_event);
 }
 
 fn handleTxAck(context: *UdpPacketContext, version: u8, token: u16) !void {

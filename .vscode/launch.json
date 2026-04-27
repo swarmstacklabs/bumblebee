@@ -16,6 +16,22 @@
         {
           "name": "LORAWAN_SERVER_FRONTEND_PATH",
           "value": "${workspaceFolder}/output/lorawan-host/frontend"
+        },
+        {
+          "name": "LORAWAN_SERVER_ADMIN_USER",
+          "value": "admin"
+        },
+        {
+          "name": "LORAWAN_SERVER_ADMIN_PASS",
+          "value": "admin"
+        },
+        {
+          "name": "LORAWAN_SERVER_LOG_LEVEL",
+          "value": "debug"
+        },
+        {
+          "name": "LORAWAN_SERVER_UDP_PORT",
+          "value": "1680"
         }
       ],
       "MIMode": "gdb",
