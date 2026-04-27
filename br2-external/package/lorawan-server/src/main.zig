@@ -26,7 +26,7 @@ pub fn main() !void {
         });
     };
 
-    server.serverMain(&app, &runtime_config) catch |err| switch (err) {
+    server.run(&app, &runtime_config) catch |err| switch (err) {
         error.ServerStartupFailed => return,
         else => {
             logger.err("server", "server_failed", "server terminated with an unrecoverable error", .{

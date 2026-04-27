@@ -12,7 +12,7 @@ const Config = app_mod.Config;
 
 pub const StartupError = error{ServerStartupFailed};
 
-pub fn serverMain(app: *App, runtime_config: *const Config) !void {
+pub fn run(app: *App, runtime_config: *const Config) !void {
     const allocator = app.allocator;
 
     const udp_sock = udp.initServerSocket(runtime_config) catch |err| switch (err) {
