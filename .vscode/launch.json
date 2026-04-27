@@ -18,6 +18,10 @@
           "value": "${workspaceFolder}/output/lorawan-host/frontend"
         },
         {
+          "name": "LORAWAN_SERVER_LOG_DIR",
+          "value": "${workspaceFolder}/output/lorawan-host/logs"
+        },
+        {
           "name": "LORAWAN_SERVER_ADMIN_USER",
           "value": "admin"
         },

@@ -13,6 +13,11 @@ pub const env_admin_user = "LORAWAN_SERVER_ADMIN_USER";
 pub const env_admin_pass = "LORAWAN_SERVER_ADMIN_PASS";
 pub const env_frontend_path = "LORAWAN_SERVER_FRONTEND_PATH";
 pub const env_log_level = "LORAWAN_SERVER_LOG_LEVEL";
+pub const env_log_dir = "LORAWAN_SERVER_LOG_DIR";
+pub const env_log_cleanup_period = "LORAWAN_SERVER_LOG_CLEANUP_PERIOD";
+pub const env_metrics_cleanup_period = "LORAWAN_SERVER_METRICS_CLEANUP_PERIOD";
+
+pub const default_cleanup_period_ms: i64 = 30 * 24 * 60 * 60 * 1000;
 
 pub const AdminConfig = struct {
     user: ?[]u8,
@@ -39,10 +44,25 @@ pub const Config = struct {
     http_port: u16,
     db_path: []u8,
     frontend_path: []u8,
+    log_dir: []u8,
     log_level: logger.Level,
+    log_cleanup_period_ms: i64,
+    metrics_cleanup_period_ms: i64,
     admin: AdminConfig,
 
-    pub fn init(allocator: std.mem.Allocator, bind_address: []const u8, udp_port: u16, http_port: u16, db_path: []u8, frontend_path: []u8, log_level: logger.Level, admin: AdminConfig) Config {
+    pub fn init(
+        allocator: std.mem.Allocator,
+        bind_address: []const u8,
+        udp_port: u16,
+        http_port: u16,
+        db_path: []u8,
+        frontend_path: []u8,
+        log_dir: []u8,
+        log_level: logger.Level,
+        log_cleanup_period_ms: i64,
+        metrics_cleanup_period_ms: i64,
+        admin: AdminConfig,
+    ) Config {
         return .{
             .allocator = allocator,
             .bind_address = bind_address,
@@ -50,7 +70,10 @@ pub const Config = struct {
             .http_port = http_port,
             .db_path = db_path,
             .frontend_path = frontend_path,
+            .log_dir = log_dir,
             .log_level = log_level,
+            .log_cleanup_period_ms = log_cleanup_period_ms,
+            .metrics_cleanup_period_ms = metrics_cleanup_period_ms,
             .admin = admin,
         };
     }
@@ -69,6 +92,9 @@ pub const Config = struct {
         const resolved_frontend_path = try resolveAbsolutePathValue(allocator, defaultFrontendPath());
         errdefer allocator.free(resolved_frontend_path);
 
+        const resolved_log_dir = try resolveAbsolutePathValue(allocator, defaultLogDir());
+        errdefer allocator.free(resolved_log_dir);
+
         return Config.init(
             allocator,
             bind_address,
@@ -76,7 +102,10 @@ pub const Config = struct {
             http_port,
             resolved_db_path,
             resolved_frontend_path,
+            resolved_log_dir,
             .info,
+            default_cleanup_period_ms,
+            default_cleanup_period_ms,
             admin,
         );
     }
@@ -95,6 +124,9 @@ pub const Config = struct {
         const frontend_path = try resolveAbsolutePathFromEnvMap(allocator, env_map, env_frontend_path, defaultFrontendPath());
         errdefer allocator.free(frontend_path);
 
+        const log_dir = try resolveAbsolutePathFromEnvMap(allocator, env_map, env_log_dir, defaultLogDir());
+        errdefer allocator.free(log_dir);
+
         var cfg = Config.init(
             allocator,
             default_bind_address,
@@ -102,7 +134,10 @@ pub const Config = struct {
             try loadPortFromEnvMap(env_map, env_http_port, default_http_port),
             db_path,
             frontend_path,
+            log_dir,
             try loadLogLevelFromEnvMap(env_map, env_log_level, .info),
+            try loadDurationMsFromEnvMap(env_map, env_log_cleanup_period, default_cleanup_period_ms),
+            try loadDurationMsFromEnvMap(env_map, env_metrics_cleanup_period, default_cleanup_period_ms),
             AdminConfig.init(
                 try loadOptionalStringFromEnvMap(allocator, env_map, env_admin_user),
                 try loadOptionalStringFromEnvMap(allocator, env_map, env_admin_pass),
@@ -117,6 +152,7 @@ pub const Config = struct {
     pub fn deinit(self: *Config) void {
         self.allocator.free(self.db_path);
         self.allocator.free(self.frontend_path);
+        self.allocator.free(self.log_dir);
         self.admin.deinit(self.allocator);
     }
 
@@ -135,8 +171,11 @@ pub const Config = struct {
             .http_port = self.http_port,
             .db_path = self.db_path,
             .frontend_path = self.frontend_path,
+            .log_dir = self.log_dir,
             .bind_address = self.bind_address,
             .log_level = @tagName(self.log_level),
+            .log_cleanup_period_ms = self.log_cleanup_period_ms,
+            .metrics_cleanup_period_ms = self.metrics_cleanup_period_ms,
             .admin_auth = if (self.admin.isConfigured()) "enabled" else "disabled",
         });
     }
@@ -153,6 +192,13 @@ fn defaultFrontendPath() []const u8 {
     return switch (builtin.cpu.arch) {
         .arm, .aarch64 => "/usr/share/lorawan-server/frontend",
         else => "frontend",
+    };
+}
+
+fn defaultLogDir() []const u8 {
+    return switch (builtin.cpu.arch) {
+        .arm, .aarch64 => "/var/log/lorawan-server",
+        else => "data/logs/lorawan-server",
     };
 }
 
@@ -174,6 +220,41 @@ fn loadLogLevelFromEnvMap(env_map: *const std.process.EnvMap, name: []const u8, 
     if (std.ascii.eqlIgnoreCase(value, "warn")) return .warn;
     if (std.ascii.eqlIgnoreCase(value, "error") or std.ascii.eqlIgnoreCase(value, "err")) return .err;
     return error.InvalidLogLevel;
+}
+
+fn loadDurationMsFromEnvMap(env_map: *const std.process.EnvMap, name: []const u8, fallback: i64) !i64 {
+    const raw = env_map.get(name) orelse return fallback;
+    const value = std.mem.trim(u8, raw, " \t\r\n");
+    if (value.len == 0) return fallback;
+
+    return parseDurationMs(value);
+}
+
+fn parseDurationMs(value: []const u8) !i64 {
+    var number_len: usize = 0;
+    while (number_len < value.len and std.ascii.isDigit(value[number_len])) {
+        number_len += 1;
+    }
+    if (number_len == 0) return error.InvalidDuration;
+
+    const amount = try std.fmt.parseInt(i64, value[0..number_len], 10);
+    if (amount <= 0) return error.InvalidDuration;
+
+    const suffix = std.mem.trim(u8, value[number_len..], " \t\r\n");
+    const multiplier: i64 = if (suffix.len == 0 or std.ascii.eqlIgnoreCase(suffix, "d") or std.ascii.eqlIgnoreCase(suffix, "day") or std.ascii.eqlIgnoreCase(suffix, "days"))
+        24 * 60 * 60 * 1000
+    else if (std.ascii.eqlIgnoreCase(suffix, "mo") or std.ascii.eqlIgnoreCase(suffix, "month") or std.ascii.eqlIgnoreCase(suffix, "months"))
+        default_cleanup_period_ms
+    else if (std.ascii.eqlIgnoreCase(suffix, "h") or std.ascii.eqlIgnoreCase(suffix, "hour") or std.ascii.eqlIgnoreCase(suffix, "hours"))
+        60 * 60 * 1000
+    else if (std.ascii.eqlIgnoreCase(suffix, "m") or std.ascii.eqlIgnoreCase(suffix, "min") or std.ascii.eqlIgnoreCase(suffix, "minute") or std.ascii.eqlIgnoreCase(suffix, "minutes"))
+        60 * 1000
+    else if (std.ascii.eqlIgnoreCase(suffix, "s") or std.ascii.eqlIgnoreCase(suffix, "sec") or std.ascii.eqlIgnoreCase(suffix, "second") or std.ascii.eqlIgnoreCase(suffix, "seconds"))
+        1000
+    else
+        return error.InvalidDuration;
+
+    return std.math.mul(i64, amount, multiplier) catch error.InvalidDuration;
 }
 
 fn loadOwnedStringFromEnvMap(allocator: std.mem.Allocator, env_map: *const std.process.EnvMap, name: []const u8, fallback: []const u8) ![]u8 {
@@ -227,7 +308,10 @@ test "validate accepts config even when frontend root is missing" {
         default_http_port,
         try std.testing.allocator.dupe(u8, "data/test.db"),
         try std.testing.allocator.dupe(u8, frontend_path),
+        try std.testing.allocator.dupe(u8, "data/logs/lorawan-server"),
         .info,
+        default_cleanup_period_ms,
+        default_cleanup_period_ms,
         AdminConfig.init(null, null),
     );
     defer cfg.deinit();
@@ -249,6 +333,7 @@ test "initWithDefaultFrontendRoot stores an absolute frontend path" {
 
     try std.testing.expect(std.fs.path.isAbsolute(cfg.db_path));
     try std.testing.expect(std.fs.path.isAbsolute(cfg.frontend_path));
+    try std.testing.expect(std.fs.path.isAbsolute(cfg.log_dir));
 }
 
 test "load resolves db and frontend paths from env map consistently" {
@@ -257,6 +342,7 @@ test "load resolves db and frontend paths from env map consistently" {
 
     try env_map.put(env_db_path, "data/runtime.db");
     try env_map.put(env_frontend_path, "dist/frontend");
+    try env_map.put(env_log_dir, "runtime/logs");
 
     var cfg = try Config.loadFromEnvMap(std.testing.allocator, &env_map);
     defer cfg.deinit();
@@ -270,6 +356,24 @@ test "load resolves db and frontend paths from env map consistently" {
     const expected_frontend_path = try std.fs.path.resolve(std.testing.allocator, &.{ cwd, "dist/frontend" });
     defer std.testing.allocator.free(expected_frontend_path);
 
+    const expected_log_dir = try std.fs.path.resolve(std.testing.allocator, &.{ cwd, "runtime/logs" });
+    defer std.testing.allocator.free(expected_log_dir);
+
     try std.testing.expectEqualStrings(expected_db_path, cfg.db_path);
     try std.testing.expectEqualStrings(expected_frontend_path, cfg.frontend_path);
+    try std.testing.expectEqualStrings(expected_log_dir, cfg.log_dir);
+}
+
+test "load parses cleanup retention periods from env map" {
+    var env_map = std.process.EnvMap.init(std.testing.allocator);
+    defer env_map.deinit();
+
+    try env_map.put(env_log_cleanup_period, "7d");
+    try env_map.put(env_metrics_cleanup_period, "12h");
+
+    var cfg = try Config.loadFromEnvMap(std.testing.allocator, &env_map);
+    defer cfg.deinit();
+
+    try std.testing.expectEqual(@as(i64, 7 * 24 * 60 * 60 * 1000), cfg.log_cleanup_period_ms);
+    try std.testing.expectEqual(@as(i64, 12 * 60 * 60 * 1000), cfg.metrics_cleanup_period_ms);
 }

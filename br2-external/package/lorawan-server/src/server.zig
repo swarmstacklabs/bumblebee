@@ -3,6 +3,7 @@ const posix = std.posix;
 
 const app_mod = @import("app.zig");
 const http = @import("http/http.zig");
+const maintenance = @import("maintenance.zig");
 const udp = @import("udp/udp.zig");
 const http_transport = @import("http/transport.zig");
 
@@ -35,7 +36,11 @@ pub fn serverMain(app: *App, runtime_config: *const Config) !void {
     var pollfds = std.ArrayList(posix.pollfd){};
     defer pollfds.deinit(allocator);
 
+    var cleanup_scheduler = maintenance.Scheduler.init(std.time.milliTimestamp());
+
     while (true) {
+        cleanup_scheduler.runIfDue(app, runtime_config);
+
         try pollfds.resize(allocator, 0);
         try pollfds.append(allocator, .{ .fd = udp_sock.fd, .events = posix.POLL.IN, .revents = 0 });
         try pollfds.append(allocator, .{ .fd = http_sock, .events = posix.POLL.IN, .revents = 0 });
@@ -44,7 +49,7 @@ pub fn serverMain(app: *App, runtime_config: *const Config) !void {
             try pollfds.append(allocator, .{ .fd = conn.fd, .events = posix.POLL.IN, .revents = 0 });
         }
 
-        _ = try posix.poll(pollfds.items, -1);
+        _ = try posix.poll(pollfds.items, cleanup_scheduler.pollTimeoutMs(std.time.milliTimestamp()));
 
         if ((pollfds.items[0].revents & posix.POLL.IN) != 0) {
             try udp.drainReady(&udp_server);

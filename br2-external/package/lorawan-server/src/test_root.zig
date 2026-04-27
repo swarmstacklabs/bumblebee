@@ -5,6 +5,7 @@ test {
     _ = @import("http/response.zig");
     _ = @import("http/http.zig");
     _ = @import("lora.zig");
+    _ = @import("maintenance.zig");
     _ = @import("repository/crud_repository.zig");
     _ = @import("repository/http_request_metrics_repository.zig");
     _ = @import("repository/read_only_repository.zig");

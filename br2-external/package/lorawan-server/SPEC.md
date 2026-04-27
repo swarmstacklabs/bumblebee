@@ -370,6 +370,9 @@ Support these environment variables in the first cut:
 - `LORAWAN_SERVER_DB_PATH`
 - `LORAWAN_SERVER_ADMIN_USER`
 - `LORAWAN_SERVER_ADMIN_PASS`
+- `LORAWAN_SERVER_LOG_DIR`
+- `LORAWAN_SERVER_LOG_CLEANUP_PERIOD` default `30d`
+- `LORAWAN_SERVER_METRICS_CLEANUP_PERIOD` default `30d`
 
 Future file-backed configuration can be added later, but env-based configuration is enough for initial Buildroot integration.
 

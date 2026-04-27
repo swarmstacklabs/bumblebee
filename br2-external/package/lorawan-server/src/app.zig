@@ -11,6 +11,9 @@ pub const env_admin_user = config.env_admin_user;
 pub const env_admin_pass = config.env_admin_pass;
 pub const env_frontend_path = config.env_frontend_path;
 pub const env_log_level = config.env_log_level;
+pub const env_log_dir = config.env_log_dir;
+pub const env_log_cleanup_period = config.env_log_cleanup_period;
+pub const env_metrics_cleanup_period = config.env_metrics_cleanup_period;
 pub const AdminConfig = config.AdminConfig;
 pub const Config = config.Config;
 
