@@ -52,7 +52,7 @@ pub const Service = struct {
     pub fn ingestRxpk(self: *Service, allocator: std.mem.Allocator, gateway_mac: [8]u8, rxpk: Rxpk) !?IngestResult {
         const decoded = codec.decodeFrame(rxpk.data) catch |err| {
             logger.debug("lora", "uplink_decode_skipped", "ignored uplink payload that failed LoRaWAN frame decoding", .{
-                .gateway_mac = gateway_mac_hex(gateway_mac),
+                .gateway_mac = packets.gatewayMacHex(gateway_mac),
                 .error_name = @errorName(err),
             });
             return null;
@@ -63,7 +63,7 @@ pub const Service = struct {
 
         const gateway = (try self.state_repo.loadGateway(allocator, gateway_hex)) orelse {
             logger.debug("lora", "gateway_not_registered", "skipped LoRaWAN ingest because gateway is not registered", .{
-                .gateway_mac = gateway_mac_hex(gateway_mac),
+                .gateway_mac = packets.gatewayMacHex(gateway_mac),
             });
             return null;
         };
@@ -72,7 +72,7 @@ pub const Service = struct {
         const network = blk: {
             if (try self.state_repo.loadNetworkByName(allocator, gateway.network_name)) |value| break :blk value;
             logger.debug("lora", "network_not_found", "skipped LoRaWAN ingest because gateway network does not exist", .{
-                .gateway_mac = gateway_mac_hex(gateway_mac),
+                .gateway_mac = packets.gatewayMacHex(gateway_mac),
                 .network_name = gateway.network_name,
             });
             return null;
@@ -132,7 +132,7 @@ pub const Service = struct {
     fn handleJoinRequest(self: *Service, allocator: std.mem.Allocator, gateway_mac: [8]u8, gateway: types.Gateway, network: types.Network, rxpk: Rxpk, join: types.JoinRequest) !?IngestResult {
         var device = (try self.state_repo.findDeviceByDevEui(allocator, join.dev_eui)) orelse {
             logger.debug("lora", "join_rejected_device_not_found", "rejected join request because dev_eui is not registered", .{
-                .gateway_mac = gateway_mac_hex(gateway_mac),
+                .gateway_mac = packets.gatewayMacHex(gateway_mac),
                 .dev_eui = join.dev_eui,
                 .app_eui = join.app_eui,
             });
@@ -142,7 +142,7 @@ pub const Service = struct {
 
         if (!std.mem.eql(u8, &device.app_eui, &join.app_eui)) {
             logger.debug("lora", "join_rejected_app_eui_mismatch", "rejected join request because app_eui does not match registered device", .{
-                .gateway_mac = gateway_mac_hex(gateway_mac),
+                .gateway_mac = packets.gatewayMacHex(gateway_mac),
                 .dev_eui = join.dev_eui,
                 .received_app_eui = join.app_eui,
                 .configured_app_eui = device.app_eui,
@@ -152,7 +152,7 @@ pub const Service = struct {
         }
         if (!codec.verifyJoinRequest(rxpk.data, device.app_key)) {
             logger.debug("lora", "join_rejected_mic_invalid", "rejected join request because MIC verification failed", .{
-                .gateway_mac = gateway_mac_hex(gateway_mac),
+                .gateway_mac = packets.gatewayMacHex(gateway_mac),
                 .dev_eui = join.dev_eui,
                 .device_id = device.id,
             });
@@ -161,7 +161,7 @@ pub const Service = struct {
         const dev_nonce = std.mem.readInt(u16, &join.dev_nonce, .little);
         if (containsDevNonce(device.used_dev_nonces, dev_nonce)) {
             logger.debug("lora", "join_rejected_dev_nonce_replay", "rejected join request because dev_nonce was already used", .{
-                .gateway_mac = gateway_mac_hex(gateway_mac),
+                .gateway_mac = packets.gatewayMacHex(gateway_mac),
                 .dev_eui = join.dev_eui,
                 .dev_nonce = dev_nonce,
                 .device_id = device.id,
@@ -171,7 +171,7 @@ pub const Service = struct {
 
         const app_nonce = allocateAppNonce(&device) orelse {
             logger.debug("lora", "join_rejected_app_nonce_exhausted", "rejected join request because app nonce space is exhausted", .{
-                .gateway_mac = gateway_mac_hex(gateway_mac),
+                .gateway_mac = packets.gatewayMacHex(gateway_mac),
                 .dev_eui = join.dev_eui,
                 .device_id = device.id,
             });
@@ -209,7 +209,7 @@ pub const Service = struct {
         defer allocator.free(join_nonce_hex);
 
         const event_json = try std.json.Stringify.valueAlloc(allocator, .{
-            .gateway_mac = gateway_mac_hex(gateway_mac),
+            .gateway_mac = packets.gatewayMacHex(gateway_mac),
             .dev_eui = dev_eui_hex,
             .app_eui = app_eui_hex,
             .dev_addr = dev_addr_hex,
@@ -234,20 +234,17 @@ pub const Service = struct {
         };
     }
 
-    fn handleDataFrame(self: *Service, allocator: std.mem.Allocator, gateway_mac: [8]u8, gateway: types.Gateway, network: types.Network, rxpk: Rxpk, frame: types.DataFrame) !?IngestResult {
+    fn handleDataFrame(self: *Service, allocator: std.mem.Allocator, gateway_mac: [8]u8, gateway: types.Gateway, network: types.Network, rxpk: Rxpk, frame: types.RawDataFrame) !?IngestResult {
         var node = (try self.state_repo.findNodeByDevAddr(allocator, frame.dev_addr)) orelse return null;
         defer node.deinit(allocator);
         if (!frame.is_uplink) return null;
 
-        const full_f_cnt = codec.fullFCnt(node.f_cnt_up, frame.f_cnt16);
-        if (!codec.verifyDataFrameMic(rxpk.data, node.nwk_s_key, frame.dev_addr, full_f_cnt, 0)) {
-            return null;
-        }
+        const verified = codec.verifyRawDataFrame(rxpk.data, frame, node.nwk_s_key, node.f_cnt_up) orelse return null;
         if (node.f_cnt_up) |previous_f_cnt| {
-            if (full_f_cnt <= previous_f_cnt) return null;
+            if (verified.f_cnt <= previous_f_cnt) return null;
         }
 
-        var parsed = try codec.decodeDataPayload(allocator, frame, node);
+        var parsed = try codec.decodeVerifiedDataPayload(allocator, verified, node);
         defer parsed.deinit(allocator);
 
         node.f_cnt_up = parsed.f_cnt;
@@ -319,7 +316,7 @@ pub const Service = struct {
         defer allocator.free(dev_addr_hex);
 
         const event_json = try std.json.Stringify.valueAlloc(allocator, .{
-            .gateway_mac = gateway_mac_hex(gateway_mac),
+            .gateway_mac = packets.gatewayMacHex(gateway_mac),
             .dev_addr = dev_addr_hex,
             .confirmed = parsed.confirmed,
             .adr = parsed.adr,
@@ -394,10 +391,6 @@ fn spreadingFactorForDataRate(datr: []const u8) ?u8 {
     if (std.mem.eql(u8, datr, "SF7BW125")) return 7;
     if (std.mem.eql(u8, datr, "SF7BW250")) return 7;
     return null;
-}
-
-fn gateway_mac_hex(mac: [8]u8) [16]u8 {
-    return packets.gatewayMacHex(mac);
 }
 
 fn parsePendingCommands(allocator: std.mem.Allocator, pending_mac_commands: ?[]const u8) ![]Command {

@@ -10,26 +10,82 @@ const CmacAes128 = std.crypto.auth.cmac.CmacAes128;
 pub const DownlinkTiming = @import("packets.zig").DownlinkTiming;
 pub const DownlinkRequest = @import("packets.zig").DownlinkRequest;
 
+const MType = enum(u3) {
+    join_request = 0b000,
+    join_accept = 0b001,
+    unconfirmed_data_up = 0b010,
+    unconfirmed_data_down = 0b011,
+    confirmed_data_up = 0b100,
+    confirmed_data_down = 0b101,
+    rejoin_request = 0b110,
+    proprietary = 0b111,
+
+    fn isConfirmedData(self: MType) bool {
+        return switch (self) {
+            .confirmed_data_up, .confirmed_data_down => true,
+            else => false,
+        };
+    }
+
+    fn dataDirection(self: MType) ?Direction {
+        return switch (self) {
+            .unconfirmed_data_up, .confirmed_data_up => .uplink,
+            .unconfirmed_data_down, .confirmed_data_down => .downlink,
+            else => null,
+        };
+    }
+};
+
+const Direction = enum {
+    uplink,
+    downlink,
+
+    fn isUplink(self: Direction) bool {
+        return self == .uplink;
+    }
+
+    fn micValue(self: Direction) u8 {
+        return switch (self) {
+            .uplink => 0,
+            .downlink => 1,
+        };
+    }
+};
+
+const FCtrl = struct {
+    adr: bool,
+    adr_ack_req: bool,
+    ack: bool,
+    class_b: bool,
+    f_pending: bool,
+    f_opts_len: u4,
+
+    fn decode(value: u8, direction: Direction) FCtrl {
+        return .{
+            .adr = (value & 0x80) != 0,
+            .adr_ack_req = (value & 0x40) != 0,
+            .ack = (value & 0x20) != 0,
+            .class_b = direction == .uplink and (value & 0x10) != 0,
+            .f_pending = direction == .downlink and (value & 0x10) != 0,
+            .f_opts_len = @intCast(value & 0x0F),
+        };
+    }
+};
+
 pub fn decodeFrame(payload: []const u8) !types.DecodedFrame {
     if (payload.len < 5) return error.PacketTooShort;
     if ((payload[0] & 0x03) != 0) return error.UnsupportedMajorVersion;
 
-    const mtype = payload[0] >> 5;
+    const mtype = parseMType(payload[0]);
     switch (mtype) {
-        0b000 => return .{ .join_request = try decodeJoinRequest(payload) },
-        0b010, 0b100 => return .{ .data = try decodeDataFrame(payload, true) },
-        0b011, 0b101 => return .{ .data = try decodeDataFrame(payload, false) },
+        .join_request => return .{ .join_request = try decodeJoinRequest(payload) },
+        .unconfirmed_data_up, .confirmed_data_up, .unconfirmed_data_down, .confirmed_data_down => return .{ .data = try decodeRawDataFrame(payload, mtype) },
         else => return error.UnsupportedFrameType,
     }
 }
 
 pub fn decodeJoinRequest(payload: []const u8) !types.JoinRequest {
     if (payload.len != 23) return error.InvalidJoinRequestLength;
-
-    var app_eui_le: [8]u8 = undefined;
-    var dev_eui_le: [8]u8 = undefined;
-    @memcpy(&app_eui_le, payload[1..9]);
-    @memcpy(&dev_eui_le, payload[9..17]);
 
     var dev_nonce: [2]u8 = undefined;
     @memcpy(&dev_nonce, payload[17..19]);
@@ -38,23 +94,20 @@ pub fn decodeJoinRequest(payload: []const u8) !types.JoinRequest {
     @memcpy(&mic, payload[payload.len - 4 ..]);
 
     return .{
-        .app_eui = reverse8(app_eui_le),
-        .dev_eui = reverse8(dev_eui_le),
+        .app_eui = readEuiLe(payload[1..9]),
+        .dev_eui = readEuiLe(payload[9..17]),
         .dev_nonce = dev_nonce,
         .mic = mic,
     };
 }
 
-fn decodeDataFrame(payload: []const u8, is_uplink: bool) !types.DataFrame {
+fn decodeRawDataFrame(payload: []const u8, mtype: MType) !types.RawDataFrame {
     if (payload.len < 12) return error.PacketTooShort;
 
-    const mtype = payload[0] >> 5;
-    const confirm = mtype == 0b100 or mtype == 0b101;
+    const direction = mtype.dataDirection() orelse return error.UnsupportedFrameType;
+    const fctrl = FCtrl.decode(payload[5], direction);
 
-    var dev_addr_le: [4]u8 = undefined;
-    @memcpy(&dev_addr_le, payload[1..5]);
-    const fctrl = payload[5];
-    const fopts_len = fctrl & 0x0F;
+    const fopts_len: usize = fctrl.f_opts_len;
     if (payload.len < 8 + fopts_len + 4) return error.PacketTooShort;
 
     const fcnt16 = std.mem.readInt(u16, payload[6..8], .little);
@@ -73,14 +126,14 @@ fn decodeDataFrame(payload: []const u8, is_uplink: bool) !types.DataFrame {
     @memcpy(&mic, payload[payload.len - 4 ..]);
 
     return .{
-        .confirmed = confirm,
-        .is_uplink = is_uplink,
-        .dev_addr = reverse4(dev_addr_le),
-        .adr = (fctrl & 0x80) != 0,
-        .adr_ack_req = (fctrl & 0x40) != 0,
-        .ack = (fctrl & 0x20) != 0,
-        .class_b = is_uplink and (fctrl & 0x10) != 0,
-        .f_pending = !is_uplink and (fctrl & 0x10) != 0,
+        .confirmed = mtype.isConfirmedData(),
+        .is_uplink = direction.isUplink(),
+        .dev_addr = readDevAddrLe(payload[1..5]),
+        .adr = fctrl.adr,
+        .adr_ack_req = fctrl.adr_ack_req,
+        .ack = fctrl.ack,
+        .class_b = fctrl.class_b,
+        .f_pending = fctrl.f_pending,
         .f_cnt16 = fcnt16,
         .f_opts = payload[opts_start..opts_end],
         .f_port = fport,
@@ -114,7 +167,7 @@ pub fn encodeJoinAccept(allocator: std.mem.Allocator, app_key: [16]u8, app_nonce
     @memcpy(buffer[index .. index + 3], &net_id);
     index += 3;
 
-    const dev_addr_le = reverse4(dev_addr);
+    const dev_addr_le = writeDevAddrLe(dev_addr);
     @memcpy(buffer[index .. index + 4], &dev_addr_le);
     index += 4;
 
@@ -168,12 +221,23 @@ pub fn verifyDataFrameMic(payload: []const u8, nwk_s_key: [16]u8, dev_addr: [4]u
     return std.mem.eql(u8, &expected, payload[payload.len - 4 ..]);
 }
 
-pub fn decodeDataPayload(allocator: std.mem.Allocator, frame: types.DataFrame, node: types.Node) !types.ParsedDataFrame {
+pub fn verifyRawDataFrame(payload: []const u8, frame: types.RawDataFrame, nwk_s_key: [16]u8, previous_f_cnt: ?u32) ?types.VerifiedDataFrame {
+    const f_cnt = fullFCnt(previous_f_cnt, frame.f_cnt16);
+    const direction: Direction = if (frame.is_uplink) .uplink else .downlink;
+    if (!verifyDataFrameMic(payload, nwk_s_key, frame.dev_addr, f_cnt, direction.micValue())) return null;
+    return types.VerifiedDataFrame.init(frame, f_cnt);
+}
+
+pub fn decodeDataPayload(allocator: std.mem.Allocator, frame: types.RawDataFrame, node: types.Node) !types.ParsedDataFrame {
     const previous_f_cnt = if (frame.is_uplink) node.f_cnt_up else node.f_cnt_down;
     return decodeDataPayloadWithFCnt(allocator, frame, node, fullFCnt(previous_f_cnt, frame.f_cnt16));
 }
 
-pub fn decodeDataPayloadWithFCnt(allocator: std.mem.Allocator, frame: types.DataFrame, node: types.Node, f_cnt: u32) !types.ParsedDataFrame {
+pub fn decodeVerifiedDataPayload(allocator: std.mem.Allocator, verified: types.VerifiedDataFrame, node: types.Node) !types.ParsedDataFrame {
+    return decodeDataPayloadWithFCnt(allocator, verified.raw, node, verified.f_cnt);
+}
+
+pub fn decodeDataPayloadWithFCnt(allocator: std.mem.Allocator, frame: types.RawDataFrame, node: types.Node, f_cnt: u32) !types.ParsedDataFrame {
     const payload_key = if (frame.f_port != null and frame.f_port.? == 0) node.nwk_s_key else node.app_s_key;
     const decoded = try cipherPayload(allocator, frame.frm_payload, payload_key, frame.is_uplink, frame.dev_addr, f_cnt);
     errdefer allocator.free(decoded);
@@ -220,7 +284,7 @@ pub fn encodeDataDownlink(allocator: std.mem.Allocator, dev_addr: [4]u8, nwk_s_k
     const mhdr: u8 = if (tx_data.confirmed) 0b10100000 else 0b01100000;
     try buffer.append(allocator, mhdr);
 
-    const dev_addr_le = reverse4(dev_addr);
+    const dev_addr_le = writeDevAddrLe(dev_addr);
     try buffer.appendSlice(allocator, &dev_addr_le);
 
     const fctrl: u8 =
@@ -256,7 +320,7 @@ pub fn cipherPayload(allocator: std.mem.Allocator, payload: []const u8, key: [16
     errdefer allocator.free(out);
     if (payload.len == 0) return out;
 
-    const dev_addr_le = reverse4(dev_addr);
+    const dev_addr_le = writeDevAddrLe(dev_addr);
     var block_index: u8 = 1;
     var offset: usize = 0;
     while (offset < payload.len) : ({
@@ -349,7 +413,7 @@ fn micForPayload(message: []const u8, nwk_s_key: [16]u8, dev_addr: [4]u8, f_cnt:
     var b0: [16]u8 = [_]u8{0} ** 16;
     b0[0] = 0x49;
     b0[5] = direction;
-    const dev_addr_le = reverse4(dev_addr);
+    const dev_addr_le = writeDevAddrLe(dev_addr);
     @memcpy(b0[6..10], &dev_addr_le);
     std.mem.writeInt(u32, b0[10..14], f_cnt, .little);
     b0[15] = @intCast(message.len);
@@ -364,14 +428,26 @@ fn micForPayload(message: []const u8, nwk_s_key: [16]u8, dev_addr: [4]u8, f_cnt:
     return mac[0..4].*;
 }
 
-fn reverse8(value: [8]u8) [8]u8 {
-    var out: [8]u8 = undefined;
-    for (value, 0..) |byte, i| out[7 - i] = byte;
-    return out;
+fn parseMType(mhdr: u8) MType {
+    return @enumFromInt(@as(u3, @intCast(mhdr >> 5)));
 }
 
-fn reverse4(value: [4]u8) [4]u8 {
-    return .{ value[3], value[2], value[1], value[0] };
+fn readEuiLe(bytes: []const u8) [8]u8 {
+    return reverseArray(8, bytes[0..8].*);
+}
+
+fn readDevAddrLe(bytes: []const u8) [4]u8 {
+    return reverseArray(4, bytes[0..4].*);
+}
+
+fn writeDevAddrLe(value: [4]u8) [4]u8 {
+    return reverseArray(4, value);
+}
+
+fn reverseArray(comptime len: usize, value: [len]u8) [len]u8 {
+    var out: [len]u8 = undefined;
+    for (value, 0..) |byte, i| out[len - 1 - i] = byte;
+    return out;
 }
 
 test "join request verification and session keys" {

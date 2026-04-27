@@ -305,7 +305,7 @@ pub const JoinRequest = struct {
     pub fn deinit(_: JoinRequest) void {}
 };
 
-pub const DataFrame = struct {
+pub const RawDataFrame = struct {
     confirmed: bool,
     is_uplink: bool,
     dev_addr: [4]u8,
@@ -320,7 +320,7 @@ pub const DataFrame = struct {
     frm_payload: []const u8,
     mic: [4]u8,
 
-    pub fn init(confirmed: bool, is_uplink: bool, dev_addr: [4]u8, adr: bool, adr_ack_req: bool, ack: bool, class_b: bool, f_pending: bool, f_cnt16: u16, f_opts: []const u8, f_port: ?u8, frm_payload: []const u8, mic: [4]u8) DataFrame {
+    pub fn init(confirmed: bool, is_uplink: bool, dev_addr: [4]u8, adr: bool, adr_ack_req: bool, ack: bool, class_b: bool, f_pending: bool, f_cnt16: u16, f_opts: []const u8, f_port: ?u8, frm_payload: []const u8, mic: [4]u8) RawDataFrame {
         return .{
             .confirmed = confirmed,
             .is_uplink = is_uplink,
@@ -338,12 +338,28 @@ pub const DataFrame = struct {
         };
     }
 
-    pub fn deinit(_: DataFrame) void {}
+    pub fn deinit(_: RawDataFrame) void {}
 };
+
+pub const VerifiedDataFrame = struct {
+    raw: RawDataFrame,
+    f_cnt: u32,
+
+    pub fn init(raw: RawDataFrame, f_cnt: u32) VerifiedDataFrame {
+        return .{
+            .raw = raw,
+            .f_cnt = f_cnt,
+        };
+    }
+
+    pub fn deinit(_: VerifiedDataFrame) void {}
+};
+
+pub const DataFrame = RawDataFrame;
 
 pub const DecodedFrame = union(enum) {
     join_request: JoinRequest,
-    data: DataFrame,
+    data: RawDataFrame,
 };
 
 pub const ParsedDataFrame = struct {
