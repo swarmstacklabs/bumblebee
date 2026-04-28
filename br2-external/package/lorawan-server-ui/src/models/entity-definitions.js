@@ -12,6 +12,7 @@ const COMMON_FIELD_LABEL_KEYS = {
   admins: 'field.administrators',
   area: 'field.area',
   network: 'field.network',
+  network_name: 'field.network',
   group: 'field.group',
   profile: 'field.profile',
   disabled: 'field.disabled',
@@ -53,7 +54,10 @@ const COMMON_FIELD_LABEL_KEYS = {
   fcnt: 'field.fcnt',
   port: 'field.port',
   data: 'field.data',
-  gpspos: 'field.gps_position'
+  gpspos: 'field.gps_position',
+  tx_rfch: 'field.tx_rfch',
+  created_at: 'field.created_at',
+  updated_at: 'field.updated_at'
 };
 
 const ENTITY_FIELD_LABEL_KEYS = {
@@ -158,7 +162,23 @@ const definitions = {
     canCreate: true,
     canEdit: true,
     canDelete: true,
-    listFields: ['mac', 'area', 'network', 'gpspos', 'health_alerts'],
+    listFields: ['mac', 'name', 'network_name', 'updated_at'],
+    createDefaults: {
+      mac: '',
+      name: '',
+      network_name: '',
+      tx_rfch: 0
+    },
+    formSections: {
+      default: [
+        {
+          id: 'general',
+          labelKey: 'section.general',
+          label: 'General',
+          fields: ['mac', 'name', 'network_name', 'tx_rfch']
+        }
+      ]
+    },
     perPage: DEFAULT_PER_PAGE
   },
   networks: {

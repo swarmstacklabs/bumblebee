@@ -91,6 +91,9 @@ export const MESSAGES = {
     'field.port': 'Port',
     'field.data': 'Data',
     'field.server_version': 'Server Version',
-    'field.gps_position': 'GPS Position'
+    'field.gps_position': 'GPS Position',
+    'field.tx_rfch': 'TX RF Channel',
+    'field.created_at': 'Created At',
+    'field.updated_at': 'Updated At'
   }
 };

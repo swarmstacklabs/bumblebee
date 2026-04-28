@@ -105,8 +105,10 @@ const fieldLabel = (field) => {
   return key ? t(key, humanizeFieldName(field)) : humanizeFieldName(field);
 };
 
+const rowRecordId = (row) => row?.[idField.value] ?? row?.id;
+
 const editPathFor = (row) => {
-  const id = row?.id ?? row?.[idField.value];
+  const id = rowRecordId(row);
   return `/${props.entity}/edit/${encodeURIComponent(String(id || ''))}`;
 };
 
@@ -176,7 +178,7 @@ const goToPage = (page) => {
 };
 
 const deleteRow = async (row) => {
-  const id = row?.id ?? row?.[idField.value];
+  const id = rowRecordId(row);
   if (!id) {
     return;
   }
