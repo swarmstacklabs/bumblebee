@@ -1,0 +1,113 @@
+.angular-google-map-container { height: 400px; }
+p.channel_check {
+  width: 30px;
+  text-align: center;
+  float: left;
+  input[type="checkbox"] { margin: 10px 0px 0px 0px; }
+  label { font-weight: normal; display: block; }
+}
+.tab-pane { margin: 20px 0px 12px; }
+.tab-header { margin: 0px 0px 17px; }
+.vis-item { font-size: 85%; }
+.vis-item.error { background-color: orangered; border-color: darkred; }
+.vis-item.warning { background-color: gold; border-color: orange; }
+.vis-item.info { background-color: lightgray; border-color: darkgray; }
+.vis-item.up { }
+.vis-item.re-up { background-color: gold; border-color: orange; }
+.vis-item.down { background-color: paleturquoise; border-color: darkturquoise; }
+.vis-item.bcast { background-color: paleturquoise; border-color: darkturquoise; }
+.btn {
+  span.glyphicon + span,
+  span.fa + span {
+    margin-left: 4px;
+  }
+}
+
+.sortable-header {
+  cursor: pointer;
+  user-select: none;
+  color: #337ab7;
+}
+
+.row-actions {
+  white-space: nowrap;
+
+  .btn + .btn {
+    margin-left: 6px;
+  }
+}
+
+.pagination-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  .pagination {
+    margin: 0;
+  }
+}
+
+.add-field-row .btn {
+  width: 100%;
+}
+
+@media (max-width: 767px) {
+  .add-field-row .col-sm-4,
+  .add-field-row .col-sm-2 {
+    margin-top: 10px;
+  }
+}
+
+.entity-form-tabs {
+  + .form-group {
+    margin-top: 30px;
+  }
+}
+
+.scope-picker .input-group {
+  max-width: 480px;
+}
+
+.selected-scope-list {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.selected-scope-chip {
+  display: inline-flex;
+  align-items: center;
+
+  .ui-select-match-close {
+    float: none;
+    line-height: 1;
+    margin-right: 4px;
+  }
+}
+
+.boolean-field-control {
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+
+  input[type="checkbox"] {
+    margin: 0;
+  }
+}
+
+.user-scope-tag {
+  margin-right: 4px;
+}
+
+.dashboard-timeline {
+  min-height: 300px;
+}
+
+.panel-default > .panel-heading {
+  color: #337ab7;
+
+  a {
+    color: #337ab7;
+  }
+}

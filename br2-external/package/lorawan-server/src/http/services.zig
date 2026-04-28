@@ -3,6 +3,8 @@ const device_repository = @import("../repository/device_repository.zig");
 const gateways_repository = @import("../repository/gateways_repository.zig");
 const networks_repository = @import("../repository/networks_repository.zig");
 const connectors_repository = @import("../repository/connectors_repository.zig");
+const events_repository = @import("../repository/events_repository.zig");
+const users_repository = @import("../repository/users_repository.zig");
 const http_request_metrics_repository = @import("../repository/http_request_metrics_repository.zig");
 const system_resource_repository = @import("../repository/system_resource_repository.zig");
 const authenticator_mod = @import("authenticator.zig");
@@ -12,6 +14,8 @@ pub const Services = struct {
     gateway_repo: gateways_repository.CRUDRepository,
     network_repo: networks_repository.CRUDRepository,
     connector_repo: connectors_repository.CRUDRepository,
+    events_repo: events_repository.Repository,
+    users_repo: users_repository.Repository,
     http_metrics_repo: http_request_metrics_repository.Repository,
     system_resource_repo: system_resource_repository.ReadOnlyRepository,
     authenticator: authenticator_mod.Authenticator,
@@ -23,6 +27,8 @@ pub const Services = struct {
             .gateway_repo = gateways_repository.crud(app.database()),
             .network_repo = networks_repository.crud(app.database()),
             .connector_repo = connectors_repository.crud(app.database()),
+            .events_repo = events_repository.Repository.init(app.database()),
+            .users_repo = users_repository.Repository.init(app.database()),
             .http_metrics_repo = http_request_metrics_repository.Repository.init(app.database()),
             .system_resource_repo = system_resource_repository.readOnly(),
             .authenticator = authenticator_mod.Authenticator.init(config.admin),

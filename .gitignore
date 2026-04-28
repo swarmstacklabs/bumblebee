@@ -11,3 +11,4 @@ ccache/
 .zig-cache-local/
 .zig-global-cache/
 zig-out/
+br2-external/package/lorawan-server-ui/node_modules/

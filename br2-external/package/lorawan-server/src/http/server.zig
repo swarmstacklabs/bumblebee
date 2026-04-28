@@ -17,6 +17,10 @@ const gateways_handler = @import("handlers/gateways.zig");
 const networks_handler = @import("handlers/networks.zig");
 const connectors_handler = @import("handlers/connectors.zig");
 const system_resources_handler = @import("handlers/system_resources.zig");
+const servers_handler = @import("handlers/servers.zig");
+const events_handler = @import("handlers/events.zig");
+const users_handler = @import("handlers/users.zig");
+const timeline_handler = @import("handlers/timeline.zig");
 
 const recover_middleware = @import("middleware/recover.zig");
 const logger_middleware = @import("middleware/logger.zig");
@@ -61,6 +65,13 @@ const routes = [_]router_mod.Route{
     router_mod.Route.init(.PUT, "/api/connectors/:id", connectors_handler.update, &api_middlewares),
     router_mod.Route.init(.DELETE, "/api/connectors/:id", connectors_handler.delete, &api_middlewares),
     router_mod.Route.init(.GET, "/api/system/resources", system_resources_handler.get, &api_middlewares),
+    router_mod.Route.init(.GET, "/api/servers", servers_handler.list, &api_middlewares),
+    router_mod.Route.init(.GET, "/api/servers/:id", servers_handler.get, &api_middlewares),
+    router_mod.Route.init(.GET, "/api/events", events_handler.list, &api_middlewares),
+    router_mod.Route.init(.GET, "/api/users", users_handler.list, &api_middlewares),
+    router_mod.Route.init(.GET, "/api/users/:id", users_handler.get, &api_middlewares),
+    router_mod.Route.init(.GET, "/api/scopes", users_handler.listScopes, &api_middlewares),
+    router_mod.Route.init(.GET, "/admin/timeline", timeline_handler.list, &api_middlewares),
     router_mod.Route.init(.GET, "/*", frontend_handler.handle, &.{}),
 };
 

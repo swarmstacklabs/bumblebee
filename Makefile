@@ -12,6 +12,12 @@ TARGET ?= rpi4
 DEVICE ?=
 TTY_DEVICE ?=
 TTY_BAUD ?= 115200
+LORAWAN_SERVER_UI_DIR := $(CURDIR)/br2-external/package/lorawan-server-ui
+LORAWAN_SERVER_UI_NODE_MODULES := $(LORAWAN_SERVER_UI_DIR)/node_modules
+LORAWAN_SERVER_UI_DIST_DIR := $(LORAWAN_SERVER_UI_DIR)/dist
+LORAWAN_SERVER_UI_DEV_PORT ?= 5173
+LORAWAN_SERVER_HTTP_PORT ?= 8080
+LORAWAN_SERVER_API_ORIGIN ?= http://127.0.0.1:$(LORAWAN_SERVER_HTTP_PORT)
 
 OUTPUT_BASE := $(CURDIR)/output
 DL_DIR ?= $(CURDIR)/dl
@@ -45,7 +51,7 @@ BUILDROOT_MAKE = env -u LD_LIBRARY_PATH -u DYLD_LIBRARY_PATH \
 
 .PHONY: help check-buildroot check-target check-tty-tool check-output-relocated print-vars defconfig menuconfig build clean distclean \
         savedefconfig burn tty shell images env-file list-targets show-image lorawan-host-build lorawan-host-run \
-        rpi3 rpi4 rpi5
+        lorawan-ui-install lorawan-ui-dev lorawan-ui-build rpi3 rpi4 rpi5
 
 help:
 	@echo "Buildroot multi-target project skeleton v2"
@@ -69,6 +75,8 @@ help:
 	@echo "  make rpi5 build"
 	@echo "  make lorawan-host-build"
 	@echo "  make lorawan-host-run"
+	@echo "  make lorawan-ui-dev"
+	@echo "  make lorawan-ui-build"
 	@echo
 	@echo "Config file: $(ENV_FILE)"
 
@@ -223,6 +231,21 @@ env-file:
 shell:
 	@env -u LD_LIBRARY_PATH -u DYLD_LIBRARY_PATH bash
 
+$(LORAWAN_SERVER_UI_NODE_MODULES): $(LORAWAN_SERVER_UI_DIR)/package-lock.json $(LORAWAN_SERVER_UI_DIR)/package.json
+	@npm --prefix "$(LORAWAN_SERVER_UI_DIR)" ci
+
+lorawan-ui-install:
+	@npm --prefix "$(LORAWAN_SERVER_UI_DIR)" ci
+
+lorawan-ui-dev: $(LORAWAN_SERVER_UI_NODE_MODULES)
+	@LORAWAN_SERVER_UI_DEV_PORT="$(LORAWAN_SERVER_UI_DEV_PORT)" \
+		LORAWAN_SERVER_API_ORIGIN="$(LORAWAN_SERVER_API_ORIGIN)" \
+		npm --prefix "$(LORAWAN_SERVER_UI_DIR)" run dev
+
+lorawan-ui-build: $(LORAWAN_SERVER_UI_NODE_MODULES)
+	@BUILD_OUT_DIR="dist" npm --prefix "$(LORAWAN_SERVER_UI_DIR)" run build:prod
+	@echo "Built $(LORAWAN_SERVER_UI_DIST_DIR)"
+
 lorawan-host-build:
 	@mkdir -p "$(OUTPUT_BASE)/lorawan-host"
 	@cd "$(CURDIR)/br2-external/package/lorawan-server/src" && \
@@ -235,10 +258,10 @@ lorawan-host-run:
 	@cd "$(CURDIR)/br2-external/package/lorawan-server/src" && \
 		printf '==> DB: %s\n==> Frontend: %s\n' \
 			"$(OUTPUT_BASE)/lorawan-host/lorawan-server.db" \
-			"$(OUTPUT_BASE)/lorawan-host/frontend" && \
+			"$(LORAWAN_SERVER_UI_DIST_DIR)" && \
 		env \
 			LORAWAN_SERVER_DB_PATH="$(OUTPUT_BASE)/lorawan-host/lorawan-server.db" \
-			LORAWAN_SERVER_FRONTEND_PATH="$(OUTPUT_BASE)/lorawan-host/frontend" \
+			LORAWAN_SERVER_FRONTEND_PATH="$(LORAWAN_SERVER_UI_DIST_DIR)" \
 			ZIG_LOCAL_CACHE_DIR="$$PWD/.zig-local-cache" \
 			ZIG_GLOBAL_CACHE_DIR="$$PWD/.zig-global-cache" \
 			zig build run -Doptimize=Debug
