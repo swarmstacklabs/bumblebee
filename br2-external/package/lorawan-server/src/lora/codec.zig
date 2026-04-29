@@ -2,6 +2,7 @@ const std = @import("std");
 const commands = @import("commands.zig");
 const mac_handlers = @import("handlers/mac_handlers.zig");
 const metrics_repository = @import("../repository/mac_command_metrics_repository.zig");
+const packet_bytes = @import("../packets.zig");
 const types = @import("types.zig");
 
 const Aes128 = std.crypto.core.aes.Aes128;
@@ -94,8 +95,8 @@ pub fn decodeJoinRequest(payload: []const u8) !types.JoinRequest {
     @memcpy(&mic, payload[payload.len - 4 ..]);
 
     return .{
-        .app_eui = readEuiLe(payload[1..9]),
-        .dev_eui = readEuiLe(payload[9..17]),
+        .app_eui = packet_bytes.readEuiLe(payload[1..9]),
+        .dev_eui = packet_bytes.readEuiLe(payload[9..17]),
         .dev_nonce = dev_nonce,
         .mic = mic,
     };
@@ -110,7 +111,7 @@ fn decodeRawDataFrame(payload: []const u8, mtype: MType) !types.RawDataFrame {
     const fopts_len: usize = fctrl.f_opts_len;
     if (payload.len < 8 + fopts_len + 4) return error.PacketTooShort;
 
-    const fcnt16 = std.mem.readInt(u16, payload[6..8], .little);
+    const fcnt16 = packet_bytes.readLE16(payload[6..8]);
     const opts_start = 8;
     const opts_end = opts_start + fopts_len;
     const body = payload[opts_end .. payload.len - 4];
@@ -128,7 +129,7 @@ fn decodeRawDataFrame(payload: []const u8, mtype: MType) !types.RawDataFrame {
     return .{
         .confirmed = mtype.isConfirmedData(),
         .is_uplink = direction.isUplink(),
-        .dev_addr = readDevAddrLe(payload[1..5]),
+        .dev_addr = packet_bytes.readDevAddrLe(payload[1..5]),
         .adr = fctrl.adr,
         .adr_ack_req = fctrl.adr_ack_req,
         .ack = fctrl.ack,
@@ -167,7 +168,7 @@ pub fn encodeJoinAccept(allocator: std.mem.Allocator, app_key: [16]u8, app_nonce
     @memcpy(buffer[index .. index + 3], &net_id);
     index += 3;
 
-    const dev_addr_le = writeDevAddrLe(dev_addr);
+    const dev_addr_le = packet_bytes.writeDevAddrLe(dev_addr);
     @memcpy(buffer[index .. index + 4], &dev_addr_le);
     index += 4;
 
@@ -284,7 +285,7 @@ pub fn encodeDataDownlink(allocator: std.mem.Allocator, dev_addr: [4]u8, nwk_s_k
     const mhdr: u8 = if (tx_data.confirmed) 0b10100000 else 0b01100000;
     try buffer.append(allocator, mhdr);
 
-    const dev_addr_le = writeDevAddrLe(dev_addr);
+    const dev_addr_le = packet_bytes.writeDevAddrLe(dev_addr);
     try buffer.appendSlice(allocator, &dev_addr_le);
 
     const fctrl: u8 =
@@ -295,7 +296,7 @@ pub fn encodeDataDownlink(allocator: std.mem.Allocator, dev_addr: [4]u8, nwk_s_k
     try buffer.append(allocator, fctrl);
 
     var fcnt_buf: [2]u8 = undefined;
-    std.mem.writeInt(u16, &fcnt_buf, @intCast(f_cnt_down & 0xFFFF), .little);
+    packet_bytes.writeLE16(&fcnt_buf, @intCast(f_cnt_down & 0xFFFF));
     try buffer.appendSlice(allocator, &fcnt_buf);
     try buffer.appendSlice(allocator, f_opts);
 
@@ -320,7 +321,7 @@ pub fn cipherPayload(allocator: std.mem.Allocator, payload: []const u8, key: [16
     errdefer allocator.free(out);
     if (payload.len == 0) return out;
 
-    const dev_addr_le = writeDevAddrLe(dev_addr);
+    const dev_addr_le = packet_bytes.writeDevAddrLe(dev_addr);
     var block_index: u8 = 1;
     var offset: usize = 0;
     while (offset < payload.len) : ({
@@ -331,7 +332,7 @@ pub fn cipherPayload(allocator: std.mem.Allocator, payload: []const u8, key: [16
         ai[0] = 0x01;
         ai[5] = if (is_uplink) 0 else 1;
         @memcpy(ai[6..10], &dev_addr_le);
-        std.mem.writeInt(u32, ai[10..14], f_cnt, .little);
+        packet_bytes.writeLE32(ai[10..14], f_cnt);
         ai[15] = block_index;
 
         var s: [16]u8 = undefined;
@@ -413,9 +414,9 @@ fn micForPayload(message: []const u8, nwk_s_key: [16]u8, dev_addr: [4]u8, f_cnt:
     var b0: [16]u8 = [_]u8{0} ** 16;
     b0[0] = 0x49;
     b0[5] = direction;
-    const dev_addr_le = writeDevAddrLe(dev_addr);
+    const dev_addr_le = packet_bytes.writeDevAddrLe(dev_addr);
     @memcpy(b0[6..10], &dev_addr_le);
-    std.mem.writeInt(u32, b0[10..14], f_cnt, .little);
+    packet_bytes.writeLE32(b0[10..14], f_cnt);
     b0[15] = @intCast(message.len);
 
     const cmac_input = std.heap.page_allocator.alloc(u8, b0.len + message.len) catch unreachable;
@@ -430,24 +431,6 @@ fn micForPayload(message: []const u8, nwk_s_key: [16]u8, dev_addr: [4]u8, f_cnt:
 
 fn parseMType(mhdr: u8) MType {
     return @enumFromInt(@as(u3, @intCast(mhdr >> 5)));
-}
-
-fn readEuiLe(bytes: []const u8) [8]u8 {
-    return reverseArray(8, bytes[0..8].*);
-}
-
-fn readDevAddrLe(bytes: []const u8) [4]u8 {
-    return reverseArray(4, bytes[0..4].*);
-}
-
-fn writeDevAddrLe(value: [4]u8) [4]u8 {
-    return reverseArray(4, value);
-}
-
-fn reverseArray(comptime len: usize, value: [len]u8) [len]u8 {
-    var out: [len]u8 = undefined;
-    for (value, 0..) |byte, i| out[len - 1 - i] = byte;
-    return out;
 }
 
 test "join request verification and session keys" {
