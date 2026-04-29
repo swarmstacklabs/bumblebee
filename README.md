@@ -220,3 +220,11 @@ For packet-level ingest logs from gateway/device traffic, start the server with:
 ```bash
 LORAWAN_SERVER_LOG_LEVEL=debug
 ```
+
+
+### Run lorawan server tests
+
+```sh
+make lorawan-host-test
+make lorawan-host-test LORAWAN_SERVER_TEST_FILTER=some_test_name
+```

@@ -3,6 +3,7 @@ const std = @import("std");
 const app_mod = @import("../../app.zig");
 const context_mod = @import("../context.zig");
 const crud_repository = @import("../../repository/crud_repository.zig");
+const handler_utils = @import("handler_utils.zig");
 
 const StatusResponse = app_mod.StatusResponse;
 const ErrorResponse = app_mod.ErrorResponse;
@@ -19,11 +20,11 @@ pub fn interface(comptime Record: type, comptime WriteInput: type, comptime Id: 
 
             return struct {
                 pub fn list(ctx: *context_mod.Context) !void {
-                    const params = try parseListParams(ctx, Impl);
+                    const params = try handler_utils.parseListParams(ctx, Impl);
                     const repo: Repository = Impl.repo(ctx);
                     const page = try repo.list(ctx.allocator, params);
                     defer {
-                        for (page.entries) |record| deinitRecord(ctx.allocator, record);
+                        for (page.entries) |record| handler_utils.deinitRecord(ctx.allocator, record);
                         ctx.allocator.free(page.entries);
                     }
 
@@ -36,27 +37,27 @@ pub fn interface(comptime Record: type, comptime WriteInput: type, comptime Id: 
                 }
 
                 pub fn get(ctx: *context_mod.Context) !void {
-                    const id = try parseRouteId(ctx);
+                    const id = try handler_utils.parseRouteId(ctx, Id);
                     const repo: Repository = Impl.repo(ctx);
                     const maybe_record = try repo.get(ctx.allocator, id);
                     if (maybe_record == null) {
-                        try ctx.res.setJsonStatus(.not_found, ErrorResponse.init(notFoundMessage(Impl.entity_name)));
+                        try ctx.res.setJsonStatus(.not_found, ErrorResponse.init(handler_utils.notFoundMessage(Impl.entity_name)));
                         return;
                     }
 
                     const record = maybe_record.?;
-                    defer deinitRecord(ctx.allocator, record);
+                    defer handler_utils.deinitRecord(ctx.allocator, record);
 
                     try ctx.res.setJson(record);
                 }
 
                 pub fn create(ctx: *context_mod.Context) !void {
                     const write_input = try Impl.parseWriteInput(ctx, ctx.req.body);
-                    defer deinitWriteInput(ctx.allocator, write_input);
+                    defer handler_utils.deinitWriteInput(ctx.allocator, write_input);
 
                     const repo: Repository = Impl.repo(ctx);
                     repo.create(write_input) catch {
-                        try ctx.res.setJsonStatus(.conflict, ErrorResponse.init(createConflictMessage(Impl.entity_name)));
+                        try ctx.res.setJsonStatus(.conflict, ErrorResponse.init(handler_utils.createConflictMessage(Impl.entity_name)));
                         return;
                     };
 
@@ -64,14 +65,14 @@ pub fn interface(comptime Record: type, comptime WriteInput: type, comptime Id: 
                 }
 
                 pub fn update(ctx: *context_mod.Context) !void {
-                    const id = try parseRouteId(ctx);
+                    const id = try handler_utils.parseRouteId(ctx, Id);
                     const write_input = try Impl.parseWriteInput(ctx, ctx.req.body);
-                    defer deinitWriteInput(ctx.allocator, write_input);
+                    defer handler_utils.deinitWriteInput(ctx.allocator, write_input);
 
                     const repo: Repository = Impl.repo(ctx);
                     const updated = try repo.update(id, write_input);
                     if (!updated) {
-                        try ctx.res.setJsonStatus(.not_found, ErrorResponse.init(notFoundMessage(Impl.entity_name)));
+                        try ctx.res.setJsonStatus(.not_found, ErrorResponse.init(handler_utils.notFoundMessage(Impl.entity_name)));
                         return;
                     }
 
@@ -79,20 +80,15 @@ pub fn interface(comptime Record: type, comptime WriteInput: type, comptime Id: 
                 }
 
                 pub fn delete(ctx: *context_mod.Context) !void {
-                    const id = try parseRouteId(ctx);
+                    const id = try handler_utils.parseRouteId(ctx, Id);
                     const repo: Repository = Impl.repo(ctx);
                     const deleted = try repo.delete(id);
                     if (!deleted) {
-                        try ctx.res.setJsonStatus(.not_found, ErrorResponse.init(notFoundMessage(Impl.entity_name)));
+                        try ctx.res.setJsonStatus(.not_found, ErrorResponse.init(handler_utils.notFoundMessage(Impl.entity_name)));
                         return;
                     }
 
                     try ctx.res.setJson(StatusResponse.init("deleted"));
-                }
-
-                fn parseRouteId(ctx: *context_mod.Context) !Id {
-                    const id_text = ctx.param("id") orelse return error.BadRequest;
-                    return parseId(Id, id_text);
                 }
             };
         }
@@ -109,81 +105,6 @@ fn ensureCrudHandlerImplementation(comptime Impl: type) void {
             ));
         }
     }
-}
-
-fn notFoundMessage(comptime entity_name: []const u8) []const u8 {
-    return std.fmt.comptimePrint("{s} not found", .{entity_name});
-}
-
-fn createConflictMessage(comptime entity_name: []const u8) []const u8 {
-    return std.fmt.comptimePrint("{s} already exists or could not be created", .{entity_name});
-}
-
-fn deinitRecord(allocator: std.mem.Allocator, record: anytype) void {
-    if (@hasDecl(@TypeOf(record), "deinit")) {
-        var mutable_record = record;
-        mutable_record.deinit(allocator);
-    }
-}
-
-fn deinitWriteInput(allocator: std.mem.Allocator, write_input: anytype) void {
-    if (@hasDecl(@TypeOf(write_input), "deinit")) write_input.deinit(allocator);
-}
-
-fn parseId(comptime T: type, value: []const u8) !T {
-    return switch (@typeInfo(T)) {
-        .int => std.fmt.parseInt(T, value, 10),
-        .pointer => |pointer| switch (pointer.size) {
-            .slice => if (pointer.child == u8) value else @compileError(std.fmt.comptimePrint(
-                "CRUDHandler only supports []const u8 slice ids, got {s}",
-                .{@typeName(T)},
-            )),
-            else => @compileError(std.fmt.comptimePrint(
-                "CRUDHandler does not support id type {s}",
-                .{@typeName(T)},
-            )),
-        },
-        else => @compileError(std.fmt.comptimePrint(
-            "CRUDHandler does not support id type {s}",
-            .{@typeName(T)},
-        )),
-    };
-}
-
-fn parseListParams(ctx: *context_mod.Context, comptime Impl: type) !crud_repository.ListParams {
-    const default_page_size: usize = if (@hasDecl(Impl, "default_page_size")) Impl.default_page_size else 50;
-    const max_page_size: usize = if (@hasDecl(Impl, "max_page_size")) Impl.max_page_size else 100;
-    const default_sort_by: []const u8 = if (@hasDecl(Impl, "default_sort_by")) Impl.default_sort_by else "id";
-    const default_sort_order: crud_repository.SortOrder = if (@hasDecl(Impl, "default_sort_order")) Impl.default_sort_order else .asc;
-
-    const page = try parsePositiveQueryInt(ctx.req.queryParam("page"), 1);
-    const page_size = try parsePositiveQueryInt(ctx.req.queryParam("page_size"), default_page_size);
-    if (page_size > max_page_size) return error.BadRequest;
-
-    const requested_sort_by = ctx.req.queryParam("sort_by") orelse default_sort_by;
-    const sort_by = if (@hasDecl(Impl, "normalizeSortBy")) try Impl.normalizeSortBy(requested_sort_by) else requested_sort_by;
-    const sort_order = try parseSortOrder(ctx.req.queryParam("sort_order"), default_sort_order);
-
-    return .{
-        .page = page,
-        .page_size = page_size,
-        .sort_by = sort_by,
-        .sort_order = sort_order,
-    };
-}
-
-fn parsePositiveQueryInt(value: ?[]const u8, default_value: usize) !usize {
-    const text = value orelse return default_value;
-    const parsed = std.fmt.parseInt(usize, text, 10) catch return error.BadRequest;
-    if (parsed == 0) return error.BadRequest;
-    return parsed;
-}
-
-fn parseSortOrder(value: ?[]const u8, default_value: crud_repository.SortOrder) !crud_repository.SortOrder {
-    const text = value orelse return default_value;
-    if (std.ascii.eqlIgnoreCase(text, "asc")) return .asc;
-    if (std.ascii.eqlIgnoreCase(text, "desc")) return .desc;
-    return error.BadRequest;
 }
 
 test "CRUDHandler forwards operations to implementation" {

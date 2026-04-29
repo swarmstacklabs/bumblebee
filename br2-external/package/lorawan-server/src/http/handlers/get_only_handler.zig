@@ -8,21 +8,9 @@ pub fn interface(comptime Record: type, comptime Repository: type) type {
 
     return struct {
         pub fn bind(comptime Impl: type) type {
-            comptime ensureReadOnlyHandlerImplementation(Impl);
+            comptime ensureGetOnlyHandlerImplementation(Impl);
 
             return struct {
-                pub fn list(ctx: *context_mod.Context) !void {
-                    const params = try handler_utils.parseListParams(ctx, Impl);
-                    const repo: Repository = Impl.repo(ctx);
-                    const page = try repo.list(ctx.allocator, params);
-                    defer {
-                        for (page.entries) |record| handler_utils.deinitRecord(ctx.allocator, record);
-                        ctx.allocator.free(page.entries);
-                    }
-
-                    try ctx.res.setJson(page);
-                }
-
                 pub fn get(ctx: *context_mod.Context) !void {
                     const repo: Repository = Impl.repo(ctx);
                     const record = try repo.get(ctx.allocator, try handler_utils.parseRouteId(ctx, Repository.IdType));
@@ -34,19 +22,19 @@ pub fn interface(comptime Record: type, comptime Repository: type) type {
     };
 }
 
-fn ensureReadOnlyHandlerImplementation(comptime Impl: type) void {
+fn ensureGetOnlyHandlerImplementation(comptime Impl: type) void {
     const required = [_][]const u8{ "entity_name", "repo" };
     inline for (required) |decl_name| {
         if (!@hasDecl(Impl, decl_name)) {
             @compileError(std.fmt.comptimePrint(
-                "{s} must implement `{s}` to satisfy ReadOnlyHandler",
+                "{s} must implement `{s}` to satisfy GetOnlyHandler",
                 .{ @typeName(Impl), decl_name },
             ));
         }
     }
 }
 
-test "ReadOnlyHandler forwards get to repository" {
+test "GetOnlyHandler forwards get to repository" {
     const testing = std.testing;
 
     const Record = struct {
@@ -61,12 +49,6 @@ test "ReadOnlyHandler forwards get to repository" {
         pub fn get(_: @This(), _: std.mem.Allocator, id: u32) !Record {
             return .{ .value = id };
         }
-
-        pub fn list(_: @This(), allocator: std.mem.Allocator, params: @import("../../repository/read_only_repository.zig").ListParams) !@import("../../repository/read_only_repository.zig").ListPage(Record) {
-            const entries = try allocator.alloc(Record, 1);
-            entries[0] = .{ .value = 42 };
-            return @import("../../repository/read_only_repository.zig").ListPage(Record).init(entries, params, 1);
-        }
     };
 
     const FakeHandler = struct {
@@ -77,8 +59,8 @@ test "ReadOnlyHandler forwards get to repository" {
         }
     };
 
-    const ReadOnlyHandler = interface(Record, Repo);
-    const Handler = ReadOnlyHandler.bind(FakeHandler);
+    const GetOnlyHandler = interface(Record, Repo);
+    const Handler = GetOnlyHandler.bind(FakeHandler);
 
     var ctx = testContext(testing.allocator, .GET, "/resource/7");
     defer ctx.deinit();
@@ -86,12 +68,6 @@ test "ReadOnlyHandler forwards get to repository" {
 
     try Handler.get(&ctx);
     try testing.expectEqualStrings("{\"value\":7}", ctx.res.body);
-
-    var list_ctx = testContext(testing.allocator, .GET, "/resource");
-    defer list_ctx.deinit();
-
-    try Handler.list(&list_ctx);
-    try testing.expectEqualStrings("{\"entries\":[{\"value\":42}],\"page_number\":1,\"page_size\":50,\"total_entries\":1,\"total_pages\":1,\"sort_by\":\"id\",\"sort_order\":\"asc\"}", list_ctx.res.body);
 }
 
 fn testContext(
