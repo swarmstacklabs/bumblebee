@@ -438,3 +438,145 @@ db/postgres.zig hides PostgresDb
 app.zig owns the singleton instance
 business logic receives *Db
 ```
+
+## Improvement plan for this codebase
+
+Use the interface pattern above only where runtime substitution or isolated tests will clearly help. Do not convert pure helpers, parsers, routers, or middleware just to make them look uniform.
+
+### Phase 1: Introduce a database interface
+
+Current code exposes SQLite through `storage.Database` and `*sqlite3`. `storage.App` owns the raw SQLite handle, and repositories prepare SQLite statements directly.
+
+Target layout:
+
+```
+src/
+  db.zig
+  db/
+    sqlite.zig
+    memory.zig
+  storage.zig
+  app.zig
+```
+
+Plan:
+
+- define `Db` in `src/db.zig`
+- move SQLite ownership and migration logic into `src/db/sqlite.zig`
+- make `App` own `db: *Db`
+- keep `sqlite.create(allocator, path) !*Db`
+- add `memory.create(allocator) !*Db` for tests
+- update repository constructors to receive `*Db` or a narrow query/executor interface
+
+Start with a small database vtable:
+
+```zig
+pub const Db = struct {
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        exec: *const fn (*Db, []const u8) anyerror!void,
+        prepare: *const fn (*Db, []const u8) anyerror!Statement,
+        changes: *const fn (*Db) i64,
+        destroy: *const fn (*Db) void,
+    };
+};
+```
+
+Adjust the exact methods while migrating repositories. Prefer a small stable interface over exposing every SQLite operation.
+
+### Phase 2: Decouple repositories from SQLite
+
+Repositories currently depend on concrete SQLite statements. Migrate them incrementally:
+
+- `device_repository.zig`
+- `gateways_repository.zig`
+- `networks_repository.zig`
+- `connectors_repository.zig`
+- `events_repository.zig`
+- `users_repository.zig`
+- LoRaWAN state and metrics repositories
+
+Recommended order:
+
+1. Move shared statement helpers behind the database module.
+2. Convert one CRUD repository first, preferably `device_repository.zig`.
+3. Add memory-backed or fake tests for that repository.
+4. Repeat for the remaining repositories.
+
+Do not rewrite `crud_repository.Interface` first. It already provides compile-time adapter behavior. Fix the storage dependency underneath it before changing the public repository shape.
+
+### Phase 3: Add connector publisher interfaces
+
+`connectors.zig` currently switches on connector kind and opens a TCP stream per publish.
+
+Introduce a `Publisher` interface if connectors need mocks, retries, long-lived connections, or plugin-like runtime behavior:
+
+```zig
+pub const Publisher = struct {
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        publish: *const fn (*Publisher, []const u8) anyerror!void,
+        destroy: *const fn (*Publisher) void,
+    };
+};
+```
+
+Target layout:
+
+```
+src/
+  connectors.zig
+  connectors/
+    publisher.zig
+    mqtt.zig
+    ws.zig
+    rabbitmq.zig
+    kafka.zig
+```
+
+Keep the existing `Kind` parsing and config validation. Only replace the dispatch and lifecycle boundary.
+
+### Phase 4: Add transport interfaces only when tests need them
+
+UDP and HTTP transports are concrete POSIX wrappers. They are good interface candidates, but lower priority than storage.
+
+Consider a `DatagramTransport` only if UDP tests are hard to write without real sockets:
+
+```zig
+pub const DatagramTransport = struct {
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        fd: *const fn (*DatagramTransport) std.posix.socket_t,
+        recvFrom: *const fn (*DatagramTransport, []u8) anyerror!?Datagram,
+        sendTo: *const fn (*DatagramTransport, *const std.posix.sockaddr.in, std.posix.socklen_t, []const u8) anyerror!void,
+        destroy: *const fn (*DatagramTransport) void,
+    };
+};
+```
+
+This would let `udp.Server` depend on transport behavior instead of `udp_transport.Socket`.
+
+### Phase 5: Keep pure modules concrete
+
+Do not add runtime interfaces to:
+
+- LoRaWAN codec and packet parsing
+- HTTP and LoRa routers
+- middleware chains
+- JSON encoding helpers
+- small repository query builders
+
+Use plain functions or `anytype` for those. Runtime interfaces should be reserved for long-lived services, selected implementations, external resources, and test doubles.
+
+### Success criteria
+
+The refactor is useful when:
+
+- application code no longer imports SQLite C types
+- tests can run repository or service behavior without a real SQLite database
+- connectors can be tested without opening network sockets
+- `App` remains the singleton owner of long-lived services
+- concrete implementations stay hidden behind module-level `create(...) !*Interface` functions
