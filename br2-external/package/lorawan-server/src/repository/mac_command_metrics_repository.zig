@@ -1,7 +1,8 @@
 const std = @import("std");
 
 const app_mod = @import("../app.zig");
-const StorageContext = app_mod.StorageContext;
+const db_mod = @import("../db.zig");
+const StorageContext = db_mod.StorageContext;
 
 pub const Repository = struct {
     storage: StorageContext,

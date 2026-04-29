@@ -1,9 +1,9 @@
 const std = @import("std");
 
-const app_mod = @import("../app.zig");
 const region_mod = @import("../lora/region.zig");
 const types = @import("../lora/types.zig");
-const StorageContext = app_mod.StorageContext;
+const db_mod = @import("../db.zig");
+const StorageContext = db_mod.StorageContext;
 
 pub const Repository = struct {
     storage: StorageContext,

@@ -1,8 +1,8 @@
 const std = @import("std");
 
-const app_mod = @import("../app.zig");
 const crud_repository = @import("crud_repository.zig");
-const StorageContext = app_mod.StorageContext;
+const db_mod = @import("../db.zig");
+const StorageContext = db_mod.StorageContext;
 const ListParams = crud_repository.ListParams;
 const SortOrder = crud_repository.SortOrder;
 

@@ -3,7 +3,7 @@ const std = @import("std");
 const app_mod = @import("../app.zig");
 const crud_repository = @import("crud_repository.zig");
 const db_mod = @import("../db.zig");
-const StorageContext = app_mod.StorageContext;
+const StorageContext = db_mod.StorageContext;
 const ListParams = crud_repository.ListParams;
 const SortOrder = crud_repository.SortOrder;
 
@@ -221,7 +221,7 @@ pub const Repository = struct {
             "FROM connectors WHERE (? = 0 OR enabled = 1) ORDER BY id ASC;";
         const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
-        stmt.bindInt(1, @as(c_int, if (enabled_only) 1 else 0));
+        stmt.bindInt(1, @as(i32, if (enabled_only) 1 else 0));
 
         var out = std.ArrayList(Record){};
         errdefer {
@@ -262,7 +262,7 @@ fn bindWriteInput(stmt: db_mod.Statement, input: WriteInput) void {
     stmt.bindText(1, input.name);
     stmt.bindText(2, input.connector_type);
     stmt.bindText(3, input.uri);
-    stmt.bindInt(4, @as(c_int, if (input.enabled) 1 else 0));
+    stmt.bindInt(4, @as(i32, if (input.enabled) 1 else 0));
     bindOptionalText(stmt, 5, input.topic);
     bindOptionalText(stmt, 6, input.exchange_name);
     bindOptionalText(stmt, 7, input.routing_key);
@@ -299,12 +299,12 @@ fn sqlSortDirection(sort_order: SortOrder) []const u8 {
     };
 }
 
-fn dupOptionalText(allocator: std.mem.Allocator, stmt: db_mod.Statement, column: c_int) !?[]u8 {
+fn dupOptionalText(allocator: std.mem.Allocator, stmt: db_mod.Statement, column: usize) !?[]u8 {
     const text = stmt.readText(column) orelse return null;
     return try allocator.dupe(u8, text);
 }
 
-fn bindOptionalText(stmt: db_mod.Statement, index: c_int, value: ?[]const u8) void {
+fn bindOptionalText(stmt: db_mod.Statement, index: usize, value: ?[]const u8) void {
     if (value) |text| stmt.bindText(index, text) else stmt.bindNull(index);
 }
 

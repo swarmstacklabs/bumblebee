@@ -58,20 +58,20 @@ pub const Statement = struct {
         _ = c.sqlite3_finalize(self.raw);
     }
 
-    pub fn bindText(self: Statement, index: c_int, value: []const u8) void {
-        _ = c.sqlite3_bind_text(self.raw, index, value.ptr, @as(c_int, @intCast(value.len)), null);
+    pub fn bindText(self: Statement, index: usize, value: []const u8) void {
+        _ = c.sqlite3_bind_text(self.raw, @intCast(index), value.ptr, @as(c_int, @intCast(value.len)), null);
     }
 
-    pub fn bindInt(self: Statement, index: c_int, value: anytype) void {
-        _ = c.sqlite3_bind_int(self.raw, index, @as(c_int, @intCast(value)));
+    pub fn bindInt(self: Statement, index: usize, value: anytype) void {
+        _ = c.sqlite3_bind_int(self.raw, @intCast(index), @as(c_int, @intCast(value)));
     }
 
-    pub fn bindInt64(self: Statement, index: c_int, value: anytype) void {
-        _ = c.sqlite3_bind_int64(self.raw, index, @as(c.sqlite3_int64, @intCast(value)));
+    pub fn bindInt64(self: Statement, index: usize, value: anytype) void {
+        _ = c.sqlite3_bind_int64(self.raw, @intCast(index), @as(c.sqlite3_int64, @intCast(value)));
     }
 
-    pub fn bindNull(self: Statement, index: c_int) void {
-        _ = c.sqlite3_bind_null(self.raw, index);
+    pub fn bindNull(self: Statement, index: usize) void {
+        _ = c.sqlite3_bind_null(self.raw, @intCast(index));
     }
 
     pub fn step(self: Statement) Step {
@@ -86,25 +86,25 @@ pub const Statement = struct {
         if (self.step() != .row) return error.SqliteStepFailed;
     }
 
-    pub fn readInt(self: Statement, column: c_int) c_int {
-        return c.sqlite3_column_int(self.raw, column);
+    pub fn readInt(self: Statement, column: usize) i32 {
+        return c.sqlite3_column_int(self.raw, @intCast(column));
     }
 
-    pub fn readInt64(self: Statement, column: c_int) i64 {
-        return c.sqlite3_column_int64(self.raw, column);
+    pub fn readInt64(self: Statement, column: usize) i64 {
+        return c.sqlite3_column_int64(self.raw, @intCast(column));
     }
 
-    pub fn readText(self: Statement, column: c_int) ?[]const u8 {
-        const value = c.sqlite3_column_text(self.raw, column) orelse return null;
+    pub fn readText(self: Statement, column: usize) ?[]const u8 {
+        const value = c.sqlite3_column_text(self.raw, @intCast(column)) orelse return null;
         return std.mem.span(value);
     }
 
-    pub fn columnType(self: Statement, column: c_int) ColumnType {
-        return ColumnType.fromSqlite(c.sqlite3_column_type(self.raw, column));
+    pub fn columnType(self: Statement, column: usize) ColumnType {
+        return ColumnType.fromSqlite(c.sqlite3_column_type(self.raw, @intCast(column)));
     }
 };
 
-pub fn changes(db: *c.sqlite3) c_int {
+pub fn changes(db: *c.sqlite3) i64 {
     return c.sqlite3_changes(db);
 }
 
@@ -116,7 +116,7 @@ pub const StorageBackend = struct {
         unlock: *const fn (*StorageBackend) void,
         exec: *const fn (*StorageBackend, []const u8) anyerror!void,
         prepare: *const fn (*StorageBackend, []const u8) anyerror!Statement,
-        changes: *const fn (*StorageBackend) c_int,
+        changes: *const fn (*StorageBackend) i64,
         runMigrations: *const fn (*StorageBackend) anyerror!void,
         destroy: *const fn (*StorageBackend) void,
     };
@@ -137,7 +137,7 @@ pub const StorageBackend = struct {
         return self.vtable.prepare(self, sql);
     }
 
-    pub fn changes(self: *StorageBackend) c_int {
+    pub fn changes(self: *StorageBackend) i64 {
         return self.vtable.changes(self);
     }
 
@@ -193,8 +193,7 @@ pub const SystemMemoryUsage = struct {
         };
     }
 
-    pub fn deinit(_: SystemMemoryUsage, _: std.mem.Allocator) void {
-    }
+    pub fn deinit(_: SystemMemoryUsage, _: std.mem.Allocator) void {}
 };
 
 pub const CpuUsage = struct {
@@ -212,8 +211,7 @@ pub const CpuUsage = struct {
         };
     }
 
-    pub fn deinit(_: CpuUsage, _: std.mem.Allocator) void {
-    }
+    pub fn deinit(_: CpuUsage, _: std.mem.Allocator) void {}
 };
 
 pub const SystemResourcesRecord = struct {
@@ -314,7 +312,7 @@ pub const StorageContext = struct {
         return self.backend.prepare(sql);
     }
 
-    pub fn changes(self: StorageContext) c_int {
+    pub fn changes(self: StorageContext) i64 {
         return self.backend.changes();
     }
 };
@@ -384,7 +382,7 @@ pub const SQLiteStorageBackend = struct {
         return Statement.prepare(fromDb(db).conn, sql);
     }
 
-    fn sqliteChanges(db: *StorageBackend) c_int {
+    fn sqliteChanges(db: *StorageBackend) i64 {
         return changes(fromDb(db).conn);
     }
 

@@ -2,8 +2,9 @@ const std = @import("std");
 
 const app_mod = @import("../app.zig");
 const crud_repository = @import("crud_repository.zig");
-const Statement = @import("../db.zig").Statement;
-const StorageContext = app_mod.StorageContext;
+const db_mod = @import("../db.zig");
+const Statement = db_mod.Statement;
+const StorageContext = db_mod.StorageContext;
 const DeviceRecord = app_mod.DeviceRecord;
 const DeviceWriteInput = app_mod.DeviceWriteInput;
 const ListParams = crud_repository.ListParams;
@@ -161,7 +162,7 @@ fn rowToDevice(allocator: std.mem.Allocator, stmt: Statement) !DeviceRecord {
     );
 }
 
-fn dupColumnText(allocator: std.mem.Allocator, stmt: Statement, column: c_int) ![]u8 {
+fn dupColumnText(allocator: std.mem.Allocator, stmt: Statement, column: usize) ![]u8 {
     const value = stmt.readText(column) orelse return allocator.alloc(u8, 0);
     return allocator.dupe(u8, value);
 }

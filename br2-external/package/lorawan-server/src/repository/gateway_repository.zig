@@ -1,10 +1,9 @@
 const std = @import("std");
 const posix = std.posix;
 
-const app_mod = @import("../app.zig");
 const packets = @import("../lora/packets.zig");
 const db_mod = @import("../db.zig");
-const StorageContext = app_mod.StorageContext;
+const StorageContext = db_mod.StorageContext;
 
 pub const GatewayTarget = struct {
     addr: posix.sockaddr.in,
@@ -285,24 +284,24 @@ fn parseGatewayMacHex(text: []const u8) ![8]u8 {
     return out;
 }
 
-fn dupOptionalText(allocator: std.mem.Allocator, stmt: db_mod.Statement, column: c_int) !?[]u8 {
+fn dupOptionalText(allocator: std.mem.Allocator, stmt: db_mod.Statement, column: usize) !?[]u8 {
     const value = stmt.readText(column) orelse return null;
     return try allocator.dupe(u8, value);
 }
 
-fn optionalI64Column(stmt: db_mod.Statement, column: c_int) ?i64 {
+fn optionalI64Column(stmt: db_mod.Statement, column: usize) ?i64 {
     if (stmt.columnType(column) == .null) return null;
     return stmt.readInt64(column);
 }
 
-fn optionalU16Column(stmt: db_mod.Statement, column: c_int) ?u16 {
+fn optionalU16Column(stmt: db_mod.Statement, column: usize) ?u16 {
     if (stmt.columnType(column) == .null) return null;
     const value = stmt.readInt(column);
     if (value < 0 or value > std.math.maxInt(u16)) return null;
     return @intCast(value);
 }
 
-fn optionalU8Column(stmt: db_mod.Statement, column: c_int) ?u8 {
+fn optionalU8Column(stmt: db_mod.Statement, column: usize) ?u8 {
     if (stmt.columnType(column) == .null) return null;
     const value = stmt.readInt(column);
     if (value < 0 or value > std.math.maxInt(u8)) return null;

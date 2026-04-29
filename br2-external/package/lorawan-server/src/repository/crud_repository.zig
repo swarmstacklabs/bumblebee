@@ -1,7 +1,7 @@
 const std = @import("std");
 
-const app_mod = @import("../app.zig");
-const StorageContext = app_mod.StorageContext;
+const db_mod = @import("../db.zig");
+const StorageContext = db_mod.StorageContext;
 
 const paging_mod = @import("paging.zig");
 pub const SortOrder = paging_mod.SortOrder;
@@ -104,7 +104,7 @@ test "CRUDRepository forwards operations to implementation" {
         storage: StorageContext,
 
         var init_count: usize = 0;
-        var last_storage_backend: ?*app_mod.StorageBackend = null;
+        var last_storage_backend: ?*db_mod.StorageBackend = null;
         var last_get_id: ?i64 = null;
         var last_create_name: ?[]const u8 = null;
         var last_update_id: ?i64 = null;

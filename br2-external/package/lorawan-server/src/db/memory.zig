@@ -44,7 +44,7 @@ const MemoryStorageBackend = struct {
         return error.UnsupportedMemoryStorageBackendPrepare;
     }
 
-    fn changes(_: *StorageBackend) c_int {
+    fn changes(_: *StorageBackend) i64 {
         return 0;
     }
 
