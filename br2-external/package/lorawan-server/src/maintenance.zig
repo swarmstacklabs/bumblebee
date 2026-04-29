@@ -42,8 +42,8 @@ pub const Scheduler = struct {
 pub fn run(app: *app_mod.App, config: *const app_mod.Config, now_ms: i64) !CleanupResult {
     const result = CleanupResult{
         .log_files_deleted = try cleanupLogs(config.log_dir, now_ms, config.log_cleanup_period_ms),
-        .mac_metrics_deleted = try cleanupMetricTable(app.database(), "mac_command_metrics", now_ms, config.metrics_cleanup_period_ms),
-        .http_metrics_deleted = try cleanupMetricTable(app.database(), "http_request_metrics", now_ms, config.metrics_cleanup_period_ms),
+        .mac_metrics_deleted = try cleanupMetricTable(app.storage(), "mac_command_metrics", now_ms, config.metrics_cleanup_period_ms),
+        .http_metrics_deleted = try cleanupMetricTable(app.storage(), "http_request_metrics", now_ms, config.metrics_cleanup_period_ms),
     };
 
     if (result.log_files_deleted != 0 or result.mac_metrics_deleted != 0 or result.http_metrics_deleted != 0) {
@@ -84,7 +84,7 @@ fn isManagedLogFile(name: []const u8) bool {
     return std.mem.startsWith(u8, name, "lorawan-server-") and std.mem.endsWith(u8, name, ".log");
 }
 
-fn cleanupMetricTable(db: app_mod.Database, table_name: []const u8, now_ms: i64, retention_ms: i64) !i64 {
+fn cleanupMetricTable(db: app_mod.StorageContext, table_name: []const u8, now_ms: i64, retention_ms: i64) !i64 {
     db.lock();
     defer db.unlock();
 
@@ -137,8 +137,8 @@ test "cleanup removes metrics older than retention window" {
     );
 
     const result = CleanupResult{
-        .mac_metrics_deleted = try cleanupMetricTable(test_app.app.database(), "mac_command_metrics", std.time.milliTimestamp(), 30 * 24 * 60 * 60 * 1000),
-        .http_metrics_deleted = try cleanupMetricTable(test_app.app.database(), "http_request_metrics", std.time.milliTimestamp(), 30 * 24 * 60 * 60 * 1000),
+        .mac_metrics_deleted = try cleanupMetricTable(test_app.app.storage(), "mac_command_metrics", std.time.milliTimestamp(), 30 * 24 * 60 * 60 * 1000),
+        .http_metrics_deleted = try cleanupMetricTable(test_app.app.storage(), "http_request_metrics", std.time.milliTimestamp(), 30 * 24 * 60 * 60 * 1000),
     };
 
     try std.testing.expectEqual(@as(i64, 1), result.mac_metrics_deleted);

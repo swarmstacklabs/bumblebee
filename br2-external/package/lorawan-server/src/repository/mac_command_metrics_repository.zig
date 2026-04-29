@@ -1,24 +1,24 @@
 const std = @import("std");
 
 const app_mod = @import("../app.zig");
-const Database = app_mod.Database;
+const StorageContext = app_mod.StorageContext;
 
 pub const Repository = struct {
-    db: Database,
+    storage: StorageContext,
 
-    pub fn init(db: Database) Repository {
-        return .{ .db = db };
+    pub fn init(storage: StorageContext) Repository {
+        return .{ .storage = storage };
     }
 
     pub fn deinit(_: Repository) void {}
 
     pub fn insertObservation(self: Repository, command_tag: []const u8, outcome: []const u8, level: []const u8, latency_ns: u64) !void {
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
         const sql =
             "INSERT INTO mac_command_metrics(command_tag, outcome, level, latency_ns) VALUES(?, ?, ?, ?);";
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, command_tag);
@@ -29,11 +29,11 @@ pub const Repository = struct {
     }
 
     pub fn count(self: Repository) !i64 {
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
         const sql = "SELECT COUNT(*) FROM mac_command_metrics;";
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         try stmt.expectRow();
@@ -70,7 +70,7 @@ test "mac command metrics repository inserts observations" {
     var app = try testApp(allocator);
     defer testAppDeinit(&app);
 
-    const repo = Repository.init(app.app.database());
+    const repo = Repository.init(app.app.storage());
     try repo.insertObservation("device_time_req", "success", "debug", 42);
     try repo.insertObservation("dev_status_ans", "failure", "err", 99);
 

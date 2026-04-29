@@ -1,5 +1,5 @@
 const storage = @import("storage.zig");
 
-pub const Db = storage.Db;
-pub const Database = storage.Database;
+pub const StorageBackend = storage.StorageBackend;
+pub const StorageContext = storage.StorageContext;
 pub const Statement = storage.Statement;

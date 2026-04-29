@@ -3,7 +3,7 @@ const std = @import("std");
 const app_mod = @import("../app.zig");
 const crud_repository = @import("crud_repository.zig");
 
-const Database = app_mod.Database;
+const StorageContext = app_mod.StorageContext;
 const ListParams = crud_repository.ListParams;
 const SortOrder = crud_repository.SortOrder;
 
@@ -30,17 +30,17 @@ pub const Record = struct {
 pub const Page = crud_repository.ListPage(Record);
 
 pub const Repository = struct {
-    db: Database,
+    storage: StorageContext,
 
-    pub fn init(db: Database) Repository {
-        return .{ .db = db };
+    pub fn init(storage: StorageContext) Repository {
+        return .{ .storage = storage };
     }
 
     pub fn list(self: Repository, allocator: std.mem.Allocator, params: ListParams) !Page {
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
-        const total_entries = try countEvents(self.db);
+        const total_entries = try countEvents(self.storage);
         const sort_column = try sqlSortColumn(params.sort_by);
         const sort_direction = sqlSortDirection(params.sort_order);
 
@@ -51,7 +51,7 @@ pub const Repository = struct {
                 "FROM events ORDER BY {s} {s}, id {s} LIMIT ? OFFSET ?;",
             .{ sort_column, sort_direction, sort_direction },
         );
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindInt64(1, params.page_size);
@@ -80,8 +80,8 @@ pub const Repository = struct {
     }
 };
 
-fn countEvents(db: Database) !usize {
-    const stmt = try db.prepare("SELECT COUNT(*) FROM events;");
+fn countEvents(storage: StorageContext) !usize {
+    const stmt = try storage.prepare("SELECT COUNT(*) FROM events;");
     defer stmt.deinit();
 
     try stmt.expectRow();

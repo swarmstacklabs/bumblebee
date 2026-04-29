@@ -1,13 +1,13 @@
 const std = @import("std");
 
 const app_mod = @import("../app.zig");
-const Database = app_mod.Database;
+const StorageContext = app_mod.StorageContext;
 
 pub const Repository = struct {
-    db: Database,
+    storage: StorageContext,
 
-    pub fn init(db: Database) Repository {
-        return .{ .db = db };
+    pub fn init(storage: StorageContext) Repository {
+        return .{ .storage = storage };
     }
 
     pub fn deinit(_: Repository) void {}
@@ -20,12 +20,12 @@ pub const Repository = struct {
         level: []const u8,
         latency_ns: u64,
     ) !void {
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
         const sql =
             "INSERT INTO http_request_metrics(method, path, status_code, level, latency_ns) VALUES(?, ?, ?, ?, ?);";
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, method);
@@ -37,11 +37,11 @@ pub const Repository = struct {
     }
 
     pub fn count(self: Repository) !i64 {
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
         const sql = "SELECT COUNT(*) FROM http_request_metrics;";
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         try stmt.expectRow();
@@ -49,11 +49,11 @@ pub const Repository = struct {
     }
 
     pub fn countByStatus(self: Repository, status_code: u16) !i64 {
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
         const sql = "SELECT COUNT(*) FROM http_request_metrics WHERE status_code = ?;";
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindInt(1, status_code);
@@ -91,7 +91,7 @@ test "http request metrics repository inserts observations" {
     var app = try testApp(allocator);
     defer testAppDeinit(&app);
 
-    const repo = Repository.init(app.app.database());
+    const repo = Repository.init(app.app.storage());
     try repo.insertObservation("GET", "/missing", 404, "info", 42);
     try repo.insertObservation("POST", "/api/devices", 500, "err", 99);
 

@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const app_mod = @import("../app.zig");
-const Database = app_mod.Database;
+const StorageContext = app_mod.StorageContext;
 
 pub const SortOrder = enum {
     asc,
@@ -53,40 +53,40 @@ pub fn Interface(comptime Record: type, comptime WriteInput: type, comptime Id: 
         const Self = @This();
         pub const Page = ListPage(Record);
 
-        db: Database,
-        listFn: *const fn (Database, std.mem.Allocator, ListParams) anyerror!Page,
-        getFn: *const fn (Database, std.mem.Allocator, Id) anyerror!?Record,
-        createFn: *const fn (Database, WriteInput) anyerror!void,
-        updateFn: *const fn (Database, Id, WriteInput) anyerror!bool,
-        deleteFn: *const fn (Database, Id) anyerror!bool,
+        storage: StorageContext,
+        listFn: *const fn (StorageContext, std.mem.Allocator, ListParams) anyerror!Page,
+        getFn: *const fn (StorageContext, std.mem.Allocator, Id) anyerror!?Record,
+        createFn: *const fn (StorageContext, WriteInput) anyerror!void,
+        updateFn: *const fn (StorageContext, Id, WriteInput) anyerror!bool,
+        deleteFn: *const fn (StorageContext, Id) anyerror!bool,
 
-        pub fn bind(comptime Impl: type, db: Database) Self {
+        pub fn bind(comptime Impl: type, storage: StorageContext) Self {
             comptime ensureCrudImplementation(Impl);
 
             return .{
-                .db = db,
+                .storage = storage,
                 .listFn = struct {
-                    fn call(repo_db: Database, allocator: std.mem.Allocator, params: ListParams) !Page {
+                    fn call(repo_db: StorageContext, allocator: std.mem.Allocator, params: ListParams) !Page {
                         return Impl.init(repo_db).list(allocator, params);
                     }
                 }.call,
                 .getFn = struct {
-                    fn call(repo_db: Database, allocator: std.mem.Allocator, id: Id) !?Record {
+                    fn call(repo_db: StorageContext, allocator: std.mem.Allocator, id: Id) !?Record {
                         return Impl.init(repo_db).get(allocator, id);
                     }
                 }.call,
                 .createFn = struct {
-                    fn call(repo_db: Database, write_input: WriteInput) !void {
+                    fn call(repo_db: StorageContext, write_input: WriteInput) !void {
                         return Impl.init(repo_db).create(write_input);
                     }
                 }.call,
                 .updateFn = struct {
-                    fn call(repo_db: Database, id: Id, write_input: WriteInput) !bool {
+                    fn call(repo_db: StorageContext, id: Id, write_input: WriteInput) !bool {
                         return Impl.init(repo_db).update(id, write_input);
                     }
                 }.call,
                 .deleteFn = struct {
-                    fn call(repo_db: Database, id: Id) !bool {
+                    fn call(repo_db: StorageContext, id: Id) !bool {
                         return Impl.init(repo_db).delete(id);
                     }
                 }.call,
@@ -94,23 +94,23 @@ pub fn Interface(comptime Record: type, comptime WriteInput: type, comptime Id: 
         }
 
         pub fn list(self: Self, allocator: std.mem.Allocator, params: ListParams) !Page {
-            return self.listFn(self.db, allocator, params);
+            return self.listFn(self.storage, allocator, params);
         }
 
         pub fn get(self: Self, allocator: std.mem.Allocator, id: Id) !?Record {
-            return self.getFn(self.db, allocator, id);
+            return self.getFn(self.storage, allocator, id);
         }
 
         pub fn create(self: Self, write_input: WriteInput) !void {
-            return self.createFn(self.db, write_input);
+            return self.createFn(self.storage, write_input);
         }
 
         pub fn update(self: Self, id: Id, write_input: WriteInput) !bool {
-            return self.updateFn(self.db, id, write_input);
+            return self.updateFn(self.storage, id, write_input);
         }
 
         pub fn delete(self: Self, id: Id) !bool {
-            return self.deleteFn(self.db, id);
+            return self.deleteFn(self.storage, id);
         }
     };
 }
@@ -140,20 +140,20 @@ test "CRUDRepository forwards operations to implementation" {
     };
 
     const FakeRepository = struct {
-        db: Database,
+        storage: StorageContext,
 
         var init_count: usize = 0;
-        var last_db: ?*app_mod.Db = null;
+        var last_storage_backend: ?*app_mod.StorageBackend = null;
         var last_get_id: ?i64 = null;
         var last_create_name: ?[]const u8 = null;
         var last_update_id: ?i64 = null;
         var last_update_name: ?[]const u8 = null;
         var last_delete_id: ?i64 = null;
 
-        pub fn init(db: Database) @This() {
+        pub fn init(storage: StorageContext) @This() {
             init_count += 1;
-            last_db = db.db;
-            return .{ .db = db };
+            last_storage_backend = storage.backend;
+            return .{ .storage = storage };
         }
 
         pub fn list(self: @This(), allocator: std.mem.Allocator, params: ListParams) !Interface(Record, WriteInput, i64).Page {
@@ -197,14 +197,14 @@ test "CRUDRepository forwards operations to implementation" {
     };
 
     FakeRepository.init_count = 0;
-    FakeRepository.last_db = null;
+    FakeRepository.last_storage_backend = null;
     FakeRepository.last_get_id = null;
     FakeRepository.last_create_name = null;
     FakeRepository.last_update_id = null;
     FakeRepository.last_update_name = null;
     FakeRepository.last_delete_id = null;
 
-    const db = Database.init(testing.allocator, undefined);
+    const db = StorageContext.init(testing.allocator, undefined);
 
     const CrudRepository = Interface(Record, WriteInput, i64);
     const repo = CrudRepository.bind(FakeRepository, db);
@@ -239,7 +239,7 @@ test "CRUDRepository forwards operations to implementation" {
     try testing.expect(!deleted);
 
     try testing.expectEqual(@as(usize, 5), FakeRepository.init_count);
-    try testing.expect(FakeRepository.last_db == db.db);
+    try testing.expect(FakeRepository.last_storage_backend == db.backend);
     try testing.expectEqual(@as(?i64, 42), FakeRepository.last_get_id);
     try testing.expectEqualStrings("created", FakeRepository.last_create_name.?);
     try testing.expectEqual(@as(?i64, 7), FakeRepository.last_update_id);
@@ -254,10 +254,10 @@ test "CRUDRepository propagates implementation errors" {
     const WriteInput = struct {};
 
     const FakeRepository = struct {
-        db: Database,
+        storage: StorageContext,
 
-        pub fn init(db: Database) @This() {
-            return .{ .db = db };
+        pub fn init(storage: StorageContext) @This() {
+            return .{ .storage = storage };
         }
 
         pub fn list(self: @This(), allocator: std.mem.Allocator, params: ListParams) !Interface(Record, WriteInput, i64).Page {
@@ -294,7 +294,7 @@ test "CRUDRepository propagates implementation errors" {
         }
     };
 
-    const db = Database.init(testing.allocator, undefined);
+    const db = StorageContext.init(testing.allocator, undefined);
 
     const CrudRepository = Interface(Record, WriteInput, i64);
     const repo = CrudRepository.bind(FakeRepository, db);

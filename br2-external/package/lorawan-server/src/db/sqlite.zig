@@ -1,3 +1,3 @@
 const storage = @import("../storage.zig");
 
-pub const create = storage.SQLiteDb.create;
+pub const create = storage.SQLiteStorageBackend.create;

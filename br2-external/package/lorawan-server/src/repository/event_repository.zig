@@ -1,26 +1,26 @@
 const app_mod = @import("../app.zig");
 const packets = @import("../lora/packets.zig");
-const Database = app_mod.Database;
+const StorageContext = app_mod.StorageContext;
 
 pub const Repository = struct {
-    db: Database,
+    storage: StorageContext,
 
-    pub fn init(db: Database) Repository {
-        return .{ .db = db };
+    pub fn init(storage: StorageContext) Repository {
+        return .{ .storage = storage };
     }
 
     pub fn deinit(_: Repository) void {}
 
     pub fn insertGatewayEvent(self: Repository, event_type: []const u8, gateway_mac: [8]u8, payload_json: []u8) !void {
-        defer self.db.allocator.free(payload_json);
+        defer self.storage.allocator.free(payload_json);
 
         const gateway_hex = packets.gatewayMacHex(gateway_mac);
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
         const sql =
             "INSERT INTO events(event_type, entity_type, entity_id, payload_json) VALUES(?, 'gateway', ?, ?);";
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, event_type);
@@ -31,11 +31,11 @@ pub const Repository = struct {
     }
 
     pub fn countByType(self: Repository, event_type: []const u8) !i64 {
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
         const sql = "SELECT COUNT(*) FROM events WHERE event_type = ?;";
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, event_type);

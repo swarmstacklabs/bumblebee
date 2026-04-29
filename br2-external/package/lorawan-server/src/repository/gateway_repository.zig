@@ -4,7 +4,7 @@ const posix = std.posix;
 const app_mod = @import("../app.zig");
 const packets = @import("../lora/packets.zig");
 const db_mod = @import("../db.zig");
-const Database = app_mod.Database;
+const StorageContext = app_mod.StorageContext;
 
 pub const GatewayTarget = struct {
     addr: posix.sockaddr.in,
@@ -60,10 +60,10 @@ pub const RuntimeRecord = struct {
 };
 
 pub const Repository = struct {
-    db: Database,
+    storage: StorageContext,
 
-    pub fn init(db: Database) Repository {
-        return .{ .db = db };
+    pub fn init(storage: StorageContext) Repository {
+        return .{ .storage = storage };
     }
 
     pub fn deinit(_: Repository) void {}
@@ -74,8 +74,8 @@ pub const Repository = struct {
         const gateway_hex = packets.gatewayMacHex(gateway_mac);
         const now_ms = std.time.milliTimestamp();
 
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
         const sql =
             "INSERT INTO gateway_runtime(gateway_mac, semtech_version, last_seen_at, last_seen_unix_ms, peer_address, peer_port, pending_downlink_token, pending_downlink_json, updated_at) " ++
@@ -90,7 +90,7 @@ pub const Repository = struct {
             "pending_downlink_json = COALESCE(excluded.pending_downlink_json, gateway_runtime.pending_downlink_json), " ++
             "updated_at = CURRENT_TIMESTAMP;";
 
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, gateway_hex[0..]);
@@ -104,14 +104,14 @@ pub const Repository = struct {
     }
 
     pub fn rememberPending(self: Repository, gateway_mac: [8]u8, token: u16, txpk_json: []const u8) !void {
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
         const sql =
             "UPDATE gateway_runtime " ++
             "SET pending_downlink_token = ?, pending_downlink_json = ?, updated_at = CURRENT_TIMESTAMP " ++
             "WHERE gateway_mac = ?;";
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindInt(1, token);
@@ -122,14 +122,14 @@ pub const Repository = struct {
     }
 
     pub fn clearPending(self: Repository, gateway_mac: [8]u8, token: u16) !void {
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
         const sql =
             "UPDATE gateway_runtime " ++
             "SET pending_downlink_token = NULL, pending_downlink_json = NULL, updated_at = CURRENT_TIMESTAMP " ++
             "WHERE gateway_mac = ? AND pending_downlink_token = ?;";
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         const gateway_hex = packets.gatewayMacHex(gateway_mac);
@@ -141,13 +141,13 @@ pub const Repository = struct {
     pub fn readTarget(self: Repository, gateway_mac: [8]u8) !GatewayTarget {
         const gateway_hex = packets.gatewayMacHex(gateway_mac);
 
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
         const sql =
             "SELECT peer_address, peer_port, semtech_version, pending_downlink_token, pending_downlink_json " ++
             "FROM gateway_runtime WHERE gateway_mac = ?;";
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, gateway_hex[0..]);
@@ -169,21 +169,21 @@ pub const Repository = struct {
             },
             optionalU8Column(stmt, 2),
             optionalU16Column(stmt, 3),
-            if (pending_text) |value| try self.db.allocator.dupe(u8, value) else null,
+            if (pending_text) |value| try self.storage.allocator.dupe(u8, value) else null,
         );
     }
 
     pub fn get(self: Repository, gateway_mac: [8]u8) !?RuntimeRecord {
         const gateway_hex = packets.gatewayMacHex(gateway_mac);
 
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
         const sql =
             "SELECT semtech_version, last_seen_at, last_seen_unix_ms, peer_address, peer_port, " ++
             "pending_downlink_token, pending_downlink_json, updated_at " ++
             "FROM gateway_runtime WHERE gateway_mac = ?;";
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, gateway_hex[0..]);
@@ -192,25 +192,25 @@ pub const Repository = struct {
         return RuntimeRecord.init(
             gateway_mac,
             optionalU8Column(stmt, 0),
-            try dupOptionalText(self.db.allocator, stmt, 1),
+            try dupOptionalText(self.storage.allocator, stmt, 1),
             optionalI64Column(stmt, 2),
-            try dupOptionalText(self.db.allocator, stmt, 3),
+            try dupOptionalText(self.storage.allocator, stmt, 3),
             optionalU16Column(stmt, 4),
             optionalU16Column(stmt, 5),
-            try dupOptionalText(self.db.allocator, stmt, 6),
-            try dupOptionalText(self.db.allocator, stmt, 7),
+            try dupOptionalText(self.storage.allocator, stmt, 6),
+            try dupOptionalText(self.storage.allocator, stmt, 7),
         );
     }
 
     pub fn list(self: Repository, allocator: std.mem.Allocator) ![]RuntimeRecord {
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
         const sql =
             "SELECT gateway_mac, semtech_version, last_seen_at, last_seen_unix_ms, peer_address, peer_port, " ++
             "pending_downlink_token, pending_downlink_json, updated_at " ++
             "FROM gateway_runtime ORDER BY gateway_mac ASC;";
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         var out = std.ArrayList(RuntimeRecord){};
@@ -238,12 +238,12 @@ pub const Repository = struct {
     }
 
     pub fn countPending(self: Repository, gateway_mac: [8]u8) !i64 {
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
         const gateway_hex = packets.gatewayMacHex(gateway_mac);
         const sql = "SELECT COUNT(*) FROM gateway_runtime WHERE gateway_mac = ? AND pending_downlink_token IS NOT NULL;";
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, gateway_hex[0..]);

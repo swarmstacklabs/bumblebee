@@ -108,44 +108,44 @@ pub fn changes(db: *c.sqlite3) c_int {
     return c.sqlite3_changes(db);
 }
 
-pub const Db = struct {
+pub const StorageBackend = struct {
     vtable: *const VTable,
 
     pub const VTable = struct {
-        lock: *const fn (*Db) void,
-        unlock: *const fn (*Db) void,
-        exec: *const fn (*Db, []const u8) anyerror!void,
-        prepare: *const fn (*Db, []const u8) anyerror!Statement,
-        changes: *const fn (*Db) c_int,
-        runMigrations: *const fn (*Db) anyerror!void,
-        destroy: *const fn (*Db) void,
+        lock: *const fn (*StorageBackend) void,
+        unlock: *const fn (*StorageBackend) void,
+        exec: *const fn (*StorageBackend, []const u8) anyerror!void,
+        prepare: *const fn (*StorageBackend, []const u8) anyerror!Statement,
+        changes: *const fn (*StorageBackend) c_int,
+        runMigrations: *const fn (*StorageBackend) anyerror!void,
+        destroy: *const fn (*StorageBackend) void,
     };
 
-    pub fn lock(self: *Db) void {
+    pub fn lock(self: *StorageBackend) void {
         self.vtable.lock(self);
     }
 
-    pub fn unlock(self: *Db) void {
+    pub fn unlock(self: *StorageBackend) void {
         self.vtable.unlock(self);
     }
 
-    pub fn exec(self: *Db, sql: []const u8) !void {
+    pub fn exec(self: *StorageBackend, sql: []const u8) !void {
         return self.vtable.exec(self, sql);
     }
 
-    pub fn prepare(self: *Db, sql: []const u8) !Statement {
+    pub fn prepare(self: *StorageBackend, sql: []const u8) !Statement {
         return self.vtable.prepare(self, sql);
     }
 
-    pub fn changes(self: *Db) c_int {
+    pub fn changes(self: *StorageBackend) c_int {
         return self.vtable.changes(self);
     }
 
-    pub fn runMigrations(self: *Db) !void {
+    pub fn runMigrations(self: *StorageBackend) !void {
         return self.vtable.runMigrations(self);
     }
 
-    pub fn destroy(self: *Db) void {
+    pub fn destroy(self: *StorageBackend) void {
         self.vtable.destroy(self);
     }
 };
@@ -284,43 +284,43 @@ pub const DeviceWriteInput = struct {
     }
 };
 
-pub const Database = struct {
+pub const StorageContext = struct {
     allocator: std.mem.Allocator,
-    db: *Db,
+    backend: *StorageBackend,
 
-    pub fn init(allocator: std.mem.Allocator, db: *Db) Database {
+    pub fn init(allocator: std.mem.Allocator, backend: *StorageBackend) StorageContext {
         return .{
             .allocator = allocator,
-            .db = db,
+            .backend = backend,
         };
     }
 
-    pub fn deinit(_: Database) void {}
+    pub fn deinit(_: StorageContext) void {}
 
-    pub fn lock(self: Database) void {
-        self.db.lock();
+    pub fn lock(self: StorageContext) void {
+        self.backend.lock();
     }
 
-    pub fn unlock(self: Database) void {
-        self.db.unlock();
+    pub fn unlock(self: StorageContext) void {
+        self.backend.unlock();
     }
 
-    pub fn prepare(self: Database, sql: []const u8) !Statement {
-        return self.db.prepare(sql);
+    pub fn prepare(self: StorageContext, sql: []const u8) !Statement {
+        return self.backend.prepare(sql);
     }
 
-    pub fn changes(self: Database) c_int {
-        return self.db.changes();
+    pub fn changes(self: StorageContext) c_int {
+        return self.backend.changes();
     }
 };
 
-pub const SQLiteDb = struct {
+pub const SQLiteStorageBackend = struct {
     allocator: std.mem.Allocator,
     conn: *c.sqlite3,
     mutex: std.Thread.Mutex = .{},
-    interface: Db,
+    interface: StorageBackend,
 
-    const vtable = Db.VTable{
+    const vtable = StorageBackend.VTable{
         .lock = lock,
         .unlock = unlock,
         .exec = exec,
@@ -330,7 +330,7 @@ pub const SQLiteDb = struct {
         .destroy = destroy,
     };
 
-    pub fn create(allocator: std.mem.Allocator, path: []const u8) !*Db {
+    pub fn create(allocator: std.mem.Allocator, path: []const u8) !*StorageBackend {
         try ensureDbDir(path);
 
         const path_z = try allocator.dupeZ(u8, path);
@@ -341,7 +341,7 @@ pub const SQLiteDb = struct {
             return error.SqliteOpenFailed;
         }
 
-        const self = try allocator.create(SQLiteDb);
+        const self = try allocator.create(SQLiteStorageBackend);
         errdefer allocator.destroy(self);
 
         self.* = .{
@@ -356,34 +356,34 @@ pub const SQLiteDb = struct {
         return &self.interface;
     }
 
-    fn fromDb(db: *Db) *SQLiteDb {
+    fn fromDb(db: *StorageBackend) *SQLiteStorageBackend {
         return @fieldParentPtr("interface", db);
     }
 
-    fn lock(db: *Db) void {
+    fn lock(db: *StorageBackend) void {
         fromDb(db).mutex.lock();
     }
 
-    fn unlock(db: *Db) void {
+    fn unlock(db: *StorageBackend) void {
         fromDb(db).mutex.unlock();
     }
 
-    fn exec(db: *Db, sql: []const u8) !void {
+    fn exec(db: *StorageBackend, sql: []const u8) !void {
         const self = fromDb(db);
         self.mutex.lock();
         defer self.mutex.unlock();
         try self.execUnlocked(sql);
     }
 
-    fn prepare(db: *Db, sql: []const u8) !Statement {
+    fn prepare(db: *StorageBackend, sql: []const u8) !Statement {
         return Statement.prepare(fromDb(db).conn, sql);
     }
 
-    fn sqliteChanges(db: *Db) c_int {
+    fn sqliteChanges(db: *StorageBackend) c_int {
         return changes(fromDb(db).conn);
     }
 
-    fn runMigrations(db: *Db) !void {
+    fn runMigrations(db: *StorageBackend) !void {
         const self = fromDb(db);
         self.mutex.lock();
         defer self.mutex.unlock();
@@ -401,13 +401,13 @@ pub const SQLiteDb = struct {
         }
     }
 
-    fn destroy(db: *Db) void {
+    fn destroy(db: *StorageBackend) void {
         const self = fromDb(db);
         _ = c.sqlite3_close(self.conn);
         self.allocator.destroy(self);
     }
 
-    fn execUnlocked(self: *SQLiteDb, sql: []const u8) !void {
+    fn execUnlocked(self: *SQLiteStorageBackend, sql: []const u8) !void {
         const sql_z = try self.allocator.dupeZ(u8, sql);
         defer self.allocator.free(sql_z);
 

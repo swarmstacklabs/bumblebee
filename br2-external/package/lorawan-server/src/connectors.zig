@@ -1,5 +1,5 @@
 const std = @import("std");
-const Database = @import("app.zig").Database;
+const StorageContext = @import("app.zig").StorageContext;
 const logger = @import("logger.zig");
 const connectors_repository = @import("repository/connectors_repository.zig");
 const kafka = @import("connectors/kafka.zig");
@@ -19,7 +19,7 @@ pub const PublishedEvent = struct {
     received_at_ms: i64,
 };
 
-pub fn publishFromDatabase(allocator: std.mem.Allocator, db: Database, event: PublishedEvent) void {
+pub fn publishFromStorage(allocator: std.mem.Allocator, storage: StorageContext, event: PublishedEvent) void {
     const envelope = encodeEnvelope(allocator, event) catch |err| {
         logger.warn("connectors", "encode_failed", "failed to encode connector payload", .{
             .error_name = @errorName(err),
@@ -29,7 +29,7 @@ pub fn publishFromDatabase(allocator: std.mem.Allocator, db: Database, event: Pu
     };
     defer allocator.free(envelope);
 
-    const repo = connectors_repository.Repository.init(db);
+    const repo = connectors_repository.Repository.init(storage);
     const records = repo.listEnabled(allocator) catch |err| {
         logger.warn("connectors", "load_failed", "failed to load connector configuration from database", .{
             .error_name = @errorName(err),

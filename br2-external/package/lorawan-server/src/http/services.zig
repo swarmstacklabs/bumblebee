@@ -23,13 +23,13 @@ pub const Services = struct {
 
     pub fn init(app: *app_mod.App, config: *const app_mod.Config) Services {
         return .{
-            .device_repo = device_repository.crud(app.database()),
-            .gateway_repo = gateways_repository.crud(app.database()),
-            .network_repo = networks_repository.crud(app.database()),
-            .connector_repo = connectors_repository.crud(app.database()),
-            .events_repo = events_repository.Repository.init(app.database()),
-            .users_repo = users_repository.Repository.init(app.database()),
-            .http_metrics_repo = http_request_metrics_repository.Repository.init(app.database()),
+            .device_repo = device_repository.crud(app.storage()),
+            .gateway_repo = gateways_repository.crud(app.storage()),
+            .network_repo = networks_repository.crud(app.storage()),
+            .connector_repo = connectors_repository.crud(app.storage()),
+            .events_repo = events_repository.Repository.init(app.storage()),
+            .users_repo = users_repository.Repository.init(app.storage()),
+            .http_metrics_repo = http_request_metrics_repository.Repository.init(app.storage()),
             .system_resource_repo = system_resource_repository.readOnly(),
             .authenticator = authenticator_mod.Authenticator.init(config.admin),
             .frontend_path = config.frontend_path,

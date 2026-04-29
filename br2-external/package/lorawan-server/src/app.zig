@@ -1,10 +1,10 @@
 const std = @import("std");
 
 const config = @import("config.zig");
-const Db = @import("db.zig").Db;
-const Database = @import("db.zig").Database;
+pub const StorageBackend = @import("db.zig").StorageBackend;
+pub const StorageContext = @import("db.zig").StorageContext;
 const pending_downlinks = @import("lora/pending_downlinks.zig");
-const storage = @import("storage.zig");
+const storage_mod = @import("storage.zig");
 
 pub const default_udp_port = config.default_udp_port;
 pub const default_http_port = config.default_http_port;
@@ -22,28 +22,28 @@ pub const env_metrics_cleanup_period = config.env_metrics_cleanup_period;
 pub const AdminConfig = config.AdminConfig;
 pub const Config = config.Config;
 
-pub const StatusResponse = storage.StatusResponse;
-pub const ErrorResponse = storage.ErrorResponse;
-pub const SystemMemoryUsage = storage.SystemMemoryUsage;
-pub const CpuUsage = storage.CpuUsage;
-pub const SystemResourcesRecord = storage.SystemResourcesRecord;
-pub const DeviceRecord = storage.DeviceRecord;
-pub const DeviceWriteInput = storage.DeviceWriteInput;
+pub const StatusResponse = storage_mod.StatusResponse;
+pub const ErrorResponse = storage_mod.ErrorResponse;
+pub const SystemMemoryUsage = storage_mod.SystemMemoryUsage;
+pub const CpuUsage = storage_mod.CpuUsage;
+pub const SystemResourcesRecord = storage_mod.SystemResourcesRecord;
+pub const DeviceRecord = storage_mod.DeviceRecord;
+pub const DeviceWriteInput = storage_mod.DeviceWriteInput;
 
 pub const App = struct {
     allocator: std.mem.Allocator,
-    db: *Db,
+    storage_backend: *StorageBackend,
     pending_downlinks: pending_downlinks.Tracker,
 
     pub fn init(allocator: std.mem.Allocator, path: []const u8) !App {
         var self = App{
             .allocator = allocator,
-            .db = try storage.SQLiteDb.create(allocator, path),
+            .storage_backend = try storage_mod.SQLiteStorageBackend.create(allocator, path),
             .pending_downlinks = pending_downlinks.Tracker.init(allocator),
         };
         errdefer {
             self.pending_downlinks.deinit();
-            self.db.destroy();
+            self.storage_backend.destroy();
         }
 
         try self.exec("PRAGMA foreign_keys = ON;");
@@ -53,18 +53,18 @@ pub const App = struct {
 
     pub fn deinit(self: *App) void {
         self.pending_downlinks.deinit();
-        self.db.destroy();
+        self.storage_backend.destroy();
     }
 
-    pub fn database(self: *App) Database {
-        return Database.init(self.allocator, self.db);
+    pub fn storage(self: *App) StorageContext {
+        return StorageContext.init(self.allocator, self.storage_backend);
     }
 
     pub fn exec(self: *App, sql: []const u8) !void {
-        try self.db.exec(sql);
+        try self.storage_backend.exec(sql);
     }
 
     pub fn runMigrations(self: *App) !void {
-        try self.db.runMigrations();
+        try self.storage_backend.runMigrations();
     }
 };

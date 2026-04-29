@@ -46,7 +46,7 @@ pub const Server = struct {
 
 fn persistAndPublishEvent(app: *App, registry: gateway_registry.Registry, event_type: []const u8, gateway_mac: [8]u8, payload_json: []const u8) !void {
     try registry.insertEvent(event_type, gateway_mac, try app.allocator.dupe(u8, payload_json));
-    connectors.publishFromDatabase(app.allocator, app.database(), .{
+    connectors.publishFromStorage(app.allocator, app.storage(), .{
         .event_type = event_type,
         .gateway_mac = gateway_mac,
         .payload_json = payload_json,
@@ -177,8 +177,8 @@ fn handlePushData(context: *UdpPacketContext, version: u8, token: u16) !void {
         .has_stat = (push.stat != null),
     });
 
-    const registry = gateway_registry.Registry.init(context.server.app.database());
-    var lorawan_service = lora.service.Service.init(context.server.app.database());
+    const registry = gateway_registry.Registry.init(context.server.app.storage());
+    var lorawan_service = lora.service.Service.init(context.server.app.storage());
     try registry.touch(push.gateway_mac, version, &context.client_addr);
 
     for (push.rxpk.items) |rxpk| {
@@ -249,7 +249,7 @@ fn handlePullData(context: *UdpPacketContext, version: u8, token: u16) !void {
 
     const gateway_mac = packets.parseGatewayMac(context.msg[4..12].*);
     try sendAck(&context.server.socket, &context.client_addr, context.client_len, version, token, packets.pull_ack_ident);
-    const registry = gateway_registry.Registry.init(context.server.app.database());
+    const registry = gateway_registry.Registry.init(context.server.app.storage());
     try registry.rememberPullTarget(gateway_mac, version, &context.client_addr);
     logger.debug("udp", "pull_data_received", "received Semtech PULL_DATA frame", .{
         .gateway_mac = packets.gatewayMacHex(gateway_mac),
@@ -283,7 +283,7 @@ fn handleTxAck(context: *UdpPacketContext, version: u8, token: u16) !void {
         else => return,
     };
 
-    const registry = gateway_registry.Registry.init(context.server.app.database());
+    const registry = gateway_registry.Registry.init(context.server.app.storage());
     const runtime = try registry.get(ack.gateway_mac);
     defer if (runtime) |value| value.deinit(context.server.app.allocator);
 
@@ -302,7 +302,7 @@ fn handleTxAck(context: *UdpPacketContext, version: u8, token: u16) !void {
     const status = if (ack.error_name) |value| value else "NONE";
 
     if (runtime_matches and std.ascii.eqlIgnoreCase(status, "NONE") and runtime.?.pending_downlink_json != null) {
-        var lorawan_service = lora.service.Service.init(context.server.app.database());
+        var lorawan_service = lora.service.Service.init(context.server.app.storage());
         try lorawan_service.syncAcknowledgedDownlink(context.server.app.allocator, runtime.?.pending_downlink_json.?);
     }
 
@@ -333,7 +333,7 @@ fn handleTxAck(context: *UdpPacketContext, version: u8, token: u16) !void {
 fn sendDownlinkWithServer(server: *Server, gateway_mac: [8]u8, req: DownlinkRequest) !u16 {
     server.app.pending_downlinks.pruneExpired();
 
-    const registry = gateway_registry.Registry.init(server.app.database());
+    const registry = gateway_registry.Registry.init(server.app.storage());
     const target = try registry.readTarget(gateway_mac);
     defer target.deinit(server.app.allocator);
 
@@ -380,7 +380,7 @@ test "pull data sends pull ack and stores gateway target" {
         packets.pull_ack_ident,
     }, ack);
 
-    const registry = gateway_registry.Registry.init(harness.app.database());
+    const registry = gateway_registry.Registry.init(harness.app.storage());
     const target = try registry.readTarget(fixture.gateway_mac);
     defer target.deinit(allocator);
 
@@ -559,8 +559,8 @@ test "join requests load registered devices from storage and create a node" {
     var server = harness.server();
 
     const fixture = ForwarderFixture{};
-    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
-    try seedDevice(harness.app.database(), "node-a", "1112131415161718", "0102030405060708", "2b7e151628aed2a6abf7158809cf4f3c", "public", "26011bda");
+    try seedGatewayNetwork(harness.app.storage(), fixture.gateway_mac);
+    try seedDevice(harness.app.storage(), "node-a", "1112131415161718", "0102030405060708", "2b7e151628aed2a6abf7158809cf4f3c", "public", "26011bda");
 
     try harness.sendFromClient(&fixture.pullData(0x0001));
     try drainReady(&server);
@@ -599,7 +599,7 @@ test "join requests load registered devices from storage and create a node" {
     try std.testing.expectEqual(@as(u8, packets.pull_resp_ident), pull_resp[3]);
     try std.testing.expectEqual(@as(i64, 1), try countEvents(&harness.app, "lorawan_join_request"));
 
-    const repo = state_repository.Repository.init(harness.app.database());
+    const repo = state_repository.Repository.init(harness.app.storage());
     const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x26, 0x01, 0x1B, 0xDA })).?;
     defer node.deinit(allocator);
     try std.testing.expectEqual(@as(?i64, 1), node.device_id);
@@ -614,11 +614,11 @@ test "join accepts include cflist from network configuration" {
 
     const fixture = ForwarderFixture{};
     try seedGatewayNetworkWithJson(
-        harness.app.database(),
+        harness.app.storage(),
         fixture.gateway_mac,
         "{\"netid\":\"000013\",\"tx_codr\":\"4/5\",\"join1_delay\":5,\"rx1_delay\":1,\"gw_power\":14,\"rxwin_init\":{\"rx1_dr_offset\":0,\"rx2_data_rate\":0,\"frequency\":869.525},\"cflist\":[{\"freq\":867.1},{\"freq\":867.3}]}",
     );
-    try seedDevice(harness.app.database(), "node-a", "1112131415161718", "0102030405060708", "2b7e151628aed2a6abf7158809cf4f3c", "public", "26011bda");
+    try seedDevice(harness.app.storage(), "node-a", "1112131415161718", "0102030405060708", "2b7e151628aed2a6abf7158809cf4f3c", "public", "26011bda");
 
     try harness.sendFromClient(&fixture.pullData(0x0001));
     try drainReady(&server);
@@ -668,9 +668,9 @@ test "tx ack persists pending mac commands and later uplink syncs node state" {
     var server = harness.server();
 
     const fixture = ForwarderFixture{};
-    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
+    try seedGatewayNetwork(harness.app.storage(), fixture.gateway_mac);
     try seedNode(
-        harness.app.database(),
+        harness.app.storage(),
         [_]u8{ 0x01, 0x02, 0x03, 0x04 },
         [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F },
         [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F },
@@ -724,7 +724,7 @@ test "tx ack persists pending mac commands and later uplink syncs node state" {
     try drainReady(&server);
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
         defer node.deinit(allocator);
         try std.testing.expect(node.pending_mac_commands != null);
@@ -755,7 +755,7 @@ test "tx ack persists pending mac commands and later uplink syncs node state" {
     }, push_ack);
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
         defer node.deinit(allocator);
         try std.testing.expectEqual(@as(i32, 7), node.adr_use.tx_power);
@@ -772,9 +772,9 @@ test "tx ack persists oversized pending mac commands encoded on port zero" {
     var server = harness.server();
 
     const fixture = ForwarderFixture{};
-    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
+    try seedGatewayNetwork(harness.app.storage(), fixture.gateway_mac);
     try seedNode(
-        harness.app.database(),
+        harness.app.storage(),
         [_]u8{ 0x01, 0x02, 0x03, 0x04 },
         [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F },
         [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F },
@@ -840,7 +840,7 @@ test "tx ack persists oversized pending mac commands encoded on port zero" {
     try drainReady(&server);
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
         defer node.deinit(allocator);
         try std.testing.expect(node.pending_mac_commands != null);
@@ -855,8 +855,8 @@ test "reused OTAA dev nonce is rejected after first successful join" {
     var server = harness.server();
 
     const fixture = ForwarderFixture{};
-    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
-    try seedDevice(harness.app.database(), "node-a", "1112131415161718", "0102030405060708", "2b7e151628aed2a6abf7158809cf4f3c", "public", "26011bda");
+    try seedGatewayNetwork(harness.app.storage(), fixture.gateway_mac);
+    try seedDevice(harness.app.storage(), "node-a", "1112131415161718", "0102030405060708", "2b7e151628aed2a6abf7158809cf4f3c", "public", "26011bda");
 
     try harness.sendFromClient(&fixture.pullData(0x0001));
     try drainReady(&server);
@@ -897,7 +897,7 @@ test "reused OTAA dev nonce is rejected after first successful join" {
     try std.testing.expectEqual(@as(i64, 1), try countEvents(&harness.app, "lorawan_join_request"));
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         const device = (try repo.findDeviceByDevEui(allocator, [_]u8{ 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18 })).?;
         defer device.deinit(allocator);
         try std.testing.expectEqual(@as(usize, 1), device.used_dev_nonces.len);
@@ -924,7 +924,7 @@ test "reused OTAA dev nonce is rejected after first successful join" {
     try std.testing.expectEqual(@as(i64, 1), try countEvents(&harness.app, "lorawan_join_request"));
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         const device = (try repo.findDeviceByDevEui(allocator, [_]u8{ 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18 })).?;
         defer device.deinit(allocator);
         try std.testing.expectEqual(@as(usize, 1), device.used_dev_nonces.len);
@@ -939,8 +939,8 @@ test "successful OTAA rejoins persist and increment app nonce state" {
     var server = harness.server();
 
     const fixture = ForwarderFixture{};
-    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
-    try seedDevice(harness.app.database(), "node-a", "1112131415161718", "0102030405060708", "2b7e151628aed2a6abf7158809cf4f3c", "public", "26011bda");
+    try seedGatewayNetwork(harness.app.storage(), fixture.gateway_mac);
+    try seedDevice(harness.app.storage(), "node-a", "1112131415161718", "0102030405060708", "2b7e151628aed2a6abf7158809cf4f3c", "public", "26011bda");
 
     try harness.sendFromClient(&fixture.pullData(0x0001));
     try drainReady(&server);
@@ -979,7 +979,7 @@ test "successful OTAA rejoins persist and increment app nonce state" {
     try std.testing.expectEqual(@as(u8, packets.pull_resp_ident), first_pull_resp[3]);
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         const device = (try repo.findDeviceByDevEui(allocator, [_]u8{ 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18 })).?;
         defer device.deinit(allocator);
         try std.testing.expectEqual(@as(u32, 1), device.next_app_nonce);
@@ -1019,7 +1019,7 @@ test "successful OTAA rejoins persist and increment app nonce state" {
     try std.testing.expectEqual(@as(u8, packets.pull_resp_ident), second_pull_resp[3]);
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         const device = (try repo.findDeviceByDevEui(allocator, [_]u8{ 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18 })).?;
         defer device.deinit(allocator);
         try std.testing.expectEqual(@as(u32, 2), device.next_app_nonce);
@@ -1036,9 +1036,9 @@ test "duplicate uplink frame counter is rejected without mutating node state" {
     var server = harness.server();
 
     const fixture = ForwarderFixture{};
-    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
+    try seedGatewayNetwork(harness.app.storage(), fixture.gateway_mac);
     try seedNode(
-        harness.app.database(),
+        harness.app.storage(),
         [_]u8{ 0x01, 0x02, 0x03, 0x04 },
         [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F },
         [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F },
@@ -1068,7 +1068,7 @@ test "duplicate uplink frame counter is rejected without mutating node state" {
     }, first_push_ack);
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
         defer node.deinit(allocator);
         try std.testing.expectEqual(@as(?u32, 1), node.f_cnt_up);
@@ -1094,7 +1094,7 @@ test "duplicate uplink frame counter is rejected without mutating node state" {
     try std.testing.expectError(error.Timeout, harness.recvOnClient());
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
         defer node.deinit(allocator);
         try std.testing.expectEqual(@as(?u32, 1), node.f_cnt_up);
@@ -1110,9 +1110,9 @@ test "confirmed uplink triggers empty ack downlink" {
     var server = harness.server();
 
     const fixture = ForwarderFixture{};
-    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
+    try seedGatewayNetwork(harness.app.storage(), fixture.gateway_mac);
     try seedNode(
-        harness.app.database(),
+        harness.app.storage(),
         [_]u8{ 0x01, 0x02, 0x03, 0x04 },
         [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F },
         [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F },
@@ -1166,7 +1166,7 @@ test "confirmed uplink triggers empty ack downlink" {
     try std.testing.expectEqual(@as(?u8, null), frame.f_port);
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
         defer node.deinit(allocator);
         try std.testing.expectEqual(@as(?u32, 1), node.f_cnt_up);
@@ -1181,9 +1181,9 @@ test "confirmed downlink is tracked, retried, and cleared by uplink ack" {
     var server = harness.server();
 
     const fixture = ForwarderFixture{};
-    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
+    try seedGatewayNetwork(harness.app.storage(), fixture.gateway_mac);
     try seedNode(
-        harness.app.database(),
+        harness.app.storage(),
         [_]u8{ 0x01, 0x02, 0x03, 0x04 },
         [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F },
         [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F },
@@ -1232,7 +1232,7 @@ test "confirmed downlink is tracked, retried, and cleared by uplink ack" {
     try drainReady(&server);
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
         defer node.deinit(allocator);
         try std.testing.expect(node.pending_confirmed_downlink != null);
@@ -1268,7 +1268,7 @@ test "confirmed downlink is tracked, retried, and cleared by uplink ack" {
     try std.testing.expectEqualSlices(u8, confirmed_downlink_phy, retried_phy);
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
         defer node.deinit(allocator);
         try std.testing.expect(node.pending_confirmed_downlink != null);
@@ -1298,7 +1298,7 @@ test "confirmed downlink is tracked, retried, and cleared by uplink ack" {
     try std.testing.expectError(error.Timeout, harness.recvOnClient());
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
         defer node.deinit(allocator);
         try std.testing.expect(node.pending_confirmed_downlink == null);
@@ -1314,14 +1314,14 @@ test "queued application downlinks are delivered and set fpending until drained"
     var server = harness.server();
 
     const fixture = ForwarderFixture{};
-    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
+    try seedGatewayNetwork(harness.app.storage(), fixture.gateway_mac);
     try seedNode(
-        harness.app.database(),
+        harness.app.storage(),
         [_]u8{ 0x01, 0x02, 0x03, 0x04 },
         [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F },
         [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F },
     );
-    try seedApplicationQueue(harness.app.database(), [_]u8{ 0x01, 0x02, 0x03, 0x04 });
+    try seedApplicationQueue(harness.app.storage(), [_]u8{ 0x01, 0x02, 0x03, 0x04 });
 
     try harness.sendFromClient(&fixture.pullData(0x0001));
     try drainReady(&server);
@@ -1363,7 +1363,7 @@ test "queued application downlinks are delivered and set fpending until drained"
     try std.testing.expectEqual(@as(?u8, 15), first_frame.f_port);
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
         defer node.deinit(allocator);
         try std.testing.expectEqual(@as(usize, 2), node.application_downlink_queue.?.len);
@@ -1380,7 +1380,7 @@ test "queued application downlinks are delivered and set fpending until drained"
     try drainReady(&server);
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
         defer node.deinit(allocator);
         try std.testing.expectEqual(@as(usize, 1), node.application_downlink_queue.?.len);
@@ -1422,7 +1422,7 @@ test "queued application downlinks are delivered and set fpending until drained"
     try std.testing.expectEqual(@as(?u8, 9), second_frame.f_port);
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
         defer node.deinit(allocator);
 
@@ -1438,7 +1438,7 @@ test "queued application downlinks are delivered and set fpending until drained"
     try drainReady(&server);
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
         defer node.deinit(allocator);
         try std.testing.expect(node.application_downlink_queue == null);
@@ -1452,14 +1452,14 @@ test "queued application downlinks keep fpending when oversized mac commands def
     var server = harness.server();
 
     const fixture = ForwarderFixture{};
-    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
+    try seedGatewayNetwork(harness.app.storage(), fixture.gateway_mac);
     try seedNode(
-        harness.app.database(),
+        harness.app.storage(),
         [_]u8{ 0x01, 0x02, 0x03, 0x04 },
         [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F },
         [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F },
     );
-    try seedApplicationQueue(harness.app.database(), [_]u8{ 0x01, 0x02, 0x03, 0x04 });
+    try seedApplicationQueue(harness.app.storage(), [_]u8{ 0x01, 0x02, 0x03, 0x04 });
 
     const request_fopts = try lora.commands.encodeFOpts(allocator, &[_]lora.commands.Command{
         .{ .link_adr_req = .{ .data_rate = 5, .tx_power = 7, .channel_mask = 0x00FF, .ch_mask_cntl = 0, .nb_rep = 1 } },
@@ -1471,7 +1471,7 @@ test "queued application downlinks keep fpending when oversized mac commands def
     try std.testing.expect(request_fopts.len > 15);
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         var node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
         defer node.deinit(allocator);
 
@@ -1520,7 +1520,7 @@ test "queued application downlinks keep fpending when oversized mac commands def
     try std.testing.expectEqual(@as(usize, 0), frame.f_opts.len);
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
         defer node.deinit(allocator);
         try std.testing.expectEqual(@as(usize, 2), node.application_downlink_queue.?.len);
@@ -1533,7 +1533,7 @@ test "queued application downlinks keep fpending when oversized mac commands def
     try drainReady(&server);
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         const node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
         defer node.deinit(allocator);
         try std.testing.expectEqual(@as(usize, 2), node.application_downlink_queue.?.len);
@@ -1547,16 +1547,16 @@ test "node downlinks prefer RX1 scheduling when uplink state supports it" {
     var server = harness.server();
 
     const fixture = ForwarderFixture{};
-    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
+    try seedGatewayNetwork(harness.app.storage(), fixture.gateway_mac);
     try seedNode(
-        harness.app.database(),
+        harness.app.storage(),
         [_]u8{ 0x01, 0x02, 0x03, 0x04 },
         [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F },
         [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F },
     );
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         var node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
         defer node.deinit(allocator);
         node.rxwin_use.frequency = 869.525;
@@ -1605,16 +1605,16 @@ test "node downlinks fall back to RX2 scheduling when RX1 cannot be derived" {
     var server = harness.server();
 
     const fixture = ForwarderFixture{ .datr = "UNSUPPORTED" };
-    try seedGatewayNetwork(harness.app.database(), fixture.gateway_mac);
+    try seedGatewayNetwork(harness.app.storage(), fixture.gateway_mac);
     try seedNode(
-        harness.app.database(),
+        harness.app.storage(),
         [_]u8{ 0x01, 0x02, 0x03, 0x04 },
         [_]u8{ 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F },
         [_]u8{ 0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F },
     );
 
     {
-        const repo = state_repository.Repository.init(harness.app.database());
+        const repo = state_repository.Repository.init(harness.app.storage());
         var node = (try repo.findNodeByDevAddr(allocator, [_]u8{ 0x01, 0x02, 0x03, 0x04 })).?;
         defer node.deinit(allocator);
         node.rxwin_use.frequency = 869.525;
@@ -1849,11 +1849,11 @@ fn ipv4(a: u8, b: u8, c: u8, d: u8) u32 {
 }
 
 fn countEvents(app: *App, event_type: []const u8) !i64 {
-    return event_repository.Repository.init(app.database()).countByType(event_type);
+    return event_repository.Repository.init(app.storage()).countByType(event_type);
 }
 
 fn countPendingTokens(app: *App, gateway_mac: [8]u8) !i64 {
-    return gateway_registry.Registry.init(app.database()).countPending(gateway_mac);
+    return gateway_registry.Registry.init(app.storage()).countPending(gateway_mac);
 }
 
 fn expectPullRespTmst(allocator: std.mem.Allocator, json_payload: []const u8, expected_tmst: i64) !void {
@@ -1874,7 +1874,7 @@ fn expectPullRespSettings(allocator: std.mem.Allocator, json_payload: []const u8
     try std.testing.expectEqualStrings(expected_datr, txpk.get("datr").?.string);
 }
 
-fn seedGatewayNetwork(db: app_mod.Database, gateway_mac: [8]u8) !void {
+fn seedGatewayNetwork(db: app_mod.StorageContext, gateway_mac: [8]u8) !void {
     return seedGatewayNetworkWithJson(
         db,
         gateway_mac,
@@ -1882,7 +1882,7 @@ fn seedGatewayNetwork(db: app_mod.Database, gateway_mac: [8]u8) !void {
     );
 }
 
-fn seedGatewayNetworkWithJson(db: app_mod.Database, gateway_mac: [8]u8, network_json: []const u8) !void {
+fn seedGatewayNetworkWithJson(db: app_mod.StorageContext, gateway_mac: [8]u8, network_json: []const u8) !void {
     const gateway_hex = packets.gatewayMacHex(gateway_mac);
     const network_stmt = try db.prepare("INSERT INTO networks(name, network_json) VALUES(?, ?);");
     defer network_stmt.deinit();
@@ -1899,7 +1899,7 @@ fn seedGatewayNetworkWithJson(db: app_mod.Database, gateway_mac: [8]u8, network_
     try gateway_stmt.expectDone();
 }
 
-fn seedDevice(db: app_mod.Database, name: []const u8, dev_eui: []const u8, app_eui: []const u8, app_key: []const u8, network_name: []const u8, dev_addr: []const u8) !void {
+fn seedDevice(db: app_mod.StorageContext, name: []const u8, dev_eui: []const u8, app_eui: []const u8, app_key: []const u8, network_name: []const u8, dev_addr: []const u8) !void {
     const stmt = try db.prepare("INSERT INTO devices(name, dev_eui, app_eui, app_key, device_json) VALUES(?, ?, ?, ?, ?);");
     defer stmt.deinit();
     const device_json = try std.fmt.allocPrint(db.allocator, "{{\"network_name\":\"{s}\",\"dev_addr\":\"{s}\"}}", .{ network_name, dev_addr });
@@ -1912,13 +1912,13 @@ fn seedDevice(db: app_mod.Database, name: []const u8, dev_eui: []const u8, app_e
     try stmt.expectDone();
 }
 
-fn seedNode(db: app_mod.Database, dev_addr: [4]u8, app_s_key: [16]u8, nwk_s_key: [16]u8) !void {
+fn seedNode(db: app_mod.StorageContext, dev_addr: [4]u8, app_s_key: [16]u8, nwk_s_key: [16]u8) !void {
     const repo = state_repository.Repository.init(db);
     const node = lora.types.Node.init(dev_addr, app_s_key, nwk_s_key, .{}, .{ .tx_power = 0, .data_rate = 0 });
     try repo.upsertNode(db.allocator, node);
 }
 
-fn seedApplicationQueue(db: app_mod.Database, dev_addr: [4]u8) !void {
+fn seedApplicationQueue(db: app_mod.StorageContext, dev_addr: [4]u8) !void {
     const repo = state_repository.Repository.init(db);
     var node = (try repo.findNodeByDevAddr(db.allocator, dev_addr)).?;
     defer node.deinit(db.allocator);

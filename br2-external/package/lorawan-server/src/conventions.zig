@@ -37,7 +37,7 @@ test "checked structs declare init and deinit" {
         expectInitDeinit(app.ErrorResponse, "ErrorResponse");
         expectInitDeinit(app.DeviceRecord, "DeviceRecord");
         expectInitDeinit(app.DeviceWriteInput, "DeviceWriteInput");
-        expectInitDeinit(app.Database, "Database");
+        expectInitDeinit(app.StorageContext, "StorageContext");
         expectInitDeinit(app.App, "App");
 
         expectInitDeinit(request.Header, "Header");

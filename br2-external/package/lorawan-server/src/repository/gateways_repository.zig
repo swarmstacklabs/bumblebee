@@ -3,7 +3,7 @@ const std = @import("std");
 const app_mod = @import("../app.zig");
 const crud_repository = @import("crud_repository.zig");
 const db_mod = @import("../db.zig");
-const Database = app_mod.Database;
+const StorageContext = app_mod.StorageContext;
 const ListParams = crud_repository.ListParams;
 const SortOrder = crud_repository.SortOrder;
 
@@ -41,19 +41,19 @@ pub const WriteInput = struct {
 pub const CRUDRepository = crud_repository.Interface(Record, WriteInput, []const u8);
 
 pub const Repository = struct {
-    db: Database,
+    storage: StorageContext,
 
-    pub fn init(db: Database) Repository {
-        return .{ .db = db };
+    pub fn init(storage: StorageContext) Repository {
+        return .{ .storage = storage };
     }
 
     pub fn deinit(_: Repository) void {}
 
     pub fn list(self: Repository, allocator: std.mem.Allocator, params: ListParams) !CRUDRepository.Page {
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
-        const total_entries = try countGateways(self.db);
+        const total_entries = try countGateways(self.storage);
         const sort_column = try sqlSortColumn(params.sort_by);
         const sort_direction = sqlSortDirection(params.sort_order);
 
@@ -64,7 +64,7 @@ pub const Repository = struct {
                 "FROM gateways ORDER BY {s} {s}, id {s} LIMIT ? OFFSET ?;",
             .{ sort_column, sort_direction, sort_direction },
         );
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindInt64(1, params.page_size);
@@ -84,11 +84,11 @@ pub const Repository = struct {
     }
 
     pub fn get(self: Repository, allocator: std.mem.Allocator, mac: []const u8) !?Record {
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
         const sql = "SELECT id, mac, name, network_name, gateway_json, created_at, updated_at FROM gateways WHERE lower(mac) = lower(?);";
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, mac);
@@ -97,14 +97,14 @@ pub const Repository = struct {
     }
 
     pub fn create(self: Repository, write_input: WriteInput) !void {
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
-        const gateway_json = try encodeGatewayJson(self.db.allocator, write_input.tx_rfch);
-        defer self.db.allocator.free(gateway_json);
+        const gateway_json = try encodeGatewayJson(self.storage.allocator, write_input.tx_rfch);
+        defer self.storage.allocator.free(gateway_json);
 
         const sql = "INSERT INTO gateways(mac, name, network_name, gateway_json, updated_at) VALUES(?, ?, ?, ?, CURRENT_TIMESTAMP);";
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, write_input.mac);
@@ -116,17 +116,17 @@ pub const Repository = struct {
     }
 
     pub fn update(self: Repository, mac: []const u8, write_input: WriteInput) !bool {
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
-        const gateway_json = try encodeGatewayJson(self.db.allocator, write_input.tx_rfch);
-        defer self.db.allocator.free(gateway_json);
+        const gateway_json = try encodeGatewayJson(self.storage.allocator, write_input.tx_rfch);
+        defer self.storage.allocator.free(gateway_json);
 
         const sql =
             "UPDATE gateways " ++
             "SET mac = ?, name = ?, network_name = ?, gateway_json = ?, updated_at = CURRENT_TIMESTAMP " ++
             "WHERE lower(mac) = lower(?);";
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, write_input.mac);
@@ -136,29 +136,29 @@ pub const Repository = struct {
         stmt.bindText(5, mac);
 
         stmt.expectDone() catch return error.GatewayUpdateFailed;
-        return self.db.changes() != 0;
+        return self.storage.changes() != 0;
     }
 
     pub fn delete(self: Repository, mac: []const u8) !bool {
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
         const sql = "DELETE FROM gateways WHERE lower(mac) = lower(?);";
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, mac);
         stmt.expectDone() catch return error.GatewayDeleteFailed;
-        return self.db.changes() != 0;
+        return self.storage.changes() != 0;
     }
 };
 
-pub fn crud(db: Database) CRUDRepository {
-    return CRUDRepository.bind(Repository, db);
+pub fn crud(storage: StorageContext) CRUDRepository {
+    return CRUDRepository.bind(Repository, storage);
 }
 
-fn countGateways(db: Database) !usize {
-    const stmt = try db.prepare("SELECT COUNT(*) FROM gateways;");
+fn countGateways(storage: StorageContext) !usize {
+    const stmt = try storage.prepare("SELECT COUNT(*) FROM gateways;");
     defer stmt.deinit();
 
     try stmt.expectRow();

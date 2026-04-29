@@ -2,14 +2,14 @@ const std = @import("std");
 
 const db_mod = @import("../db.zig");
 
-const Db = db_mod.Db;
+const StorageBackend = db_mod.StorageBackend;
 const Statement = db_mod.Statement;
 
-const MemoryDb = struct {
+const MemoryStorageBackend = struct {
     allocator: std.mem.Allocator,
-    interface: Db,
+    interface: StorageBackend,
 
-    const vtable = Db.VTable{
+    const vtable = StorageBackend.VTable{
         .lock = lock,
         .unlock = unlock,
         .exec = exec,
@@ -19,8 +19,8 @@ const MemoryDb = struct {
         .destroy = destroy,
     };
 
-    pub fn create(allocator: std.mem.Allocator) !*Db {
-        const self = try allocator.create(MemoryDb);
+    pub fn create(allocator: std.mem.Allocator) !*StorageBackend {
+        const self = try allocator.create(MemoryStorageBackend);
         self.* = .{
             .allocator = allocator,
             .interface = .{
@@ -30,30 +30,30 @@ const MemoryDb = struct {
         return &self.interface;
     }
 
-    fn fromDb(db: *Db) *MemoryDb {
+    fn fromDb(db: *StorageBackend) *MemoryStorageBackend {
         return @fieldParentPtr("interface", db);
     }
 
-    fn lock(_: *Db) void {}
+    fn lock(_: *StorageBackend) void {}
 
-    fn unlock(_: *Db) void {}
+    fn unlock(_: *StorageBackend) void {}
 
-    fn exec(_: *Db, _: []const u8) !void {}
+    fn exec(_: *StorageBackend, _: []const u8) !void {}
 
-    fn prepare(_: *Db, _: []const u8) !Statement {
-        return error.UnsupportedMemoryDbPrepare;
+    fn prepare(_: *StorageBackend, _: []const u8) !Statement {
+        return error.UnsupportedMemoryStorageBackendPrepare;
     }
 
-    fn changes(_: *Db) c_int {
+    fn changes(_: *StorageBackend) c_int {
         return 0;
     }
 
-    fn runMigrations(_: *Db) !void {}
+    fn runMigrations(_: *StorageBackend) !void {}
 
-    fn destroy(db: *Db) void {
+    fn destroy(db: *StorageBackend) void {
         const self = fromDb(db);
         self.allocator.destroy(self);
     }
 };
 
-pub const create = MemoryDb.create;
+pub const create = MemoryStorageBackend.create;

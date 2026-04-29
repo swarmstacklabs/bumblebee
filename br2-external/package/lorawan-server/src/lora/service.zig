@@ -10,7 +10,7 @@ const logger = @import("../logger.zig");
 const region_mod = @import("region.zig");
 const state_repository = @import("../repository/lorawan_state_repository.zig");
 const types = @import("types.zig");
-const Database = app_mod.Database;
+const StorageContext = app_mod.StorageContext;
 const Rxpk = packets.Rxpk;
 const Command = commands.Command;
 const confirmed_downlink_max_retries: u8 = 2;
@@ -42,7 +42,7 @@ pub const Service = struct {
     state_repo: state_repository.Repository,
     metrics_repo: mac_command_metrics_repository.Repository,
 
-    pub fn init(db: Database) Service {
+    pub fn init(db: StorageContext) Service {
         return .{
             .state_repo = state_repository.Repository.init(db),
             .metrics_repo = mac_command_metrics_repository.Repository.init(db),

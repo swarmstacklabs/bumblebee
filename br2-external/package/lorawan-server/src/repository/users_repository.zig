@@ -3,7 +3,7 @@ const std = @import("std");
 const app_mod = @import("../app.zig");
 const crud_repository = @import("crud_repository.zig");
 
-const Database = app_mod.Database;
+const StorageContext = app_mod.StorageContext;
 const ListParams = crud_repository.ListParams;
 const SortOrder = crud_repository.SortOrder;
 
@@ -39,17 +39,17 @@ const all_scopes = [_]ScopeRecord{
 };
 
 pub const Repository = struct {
-    db: Database,
+    storage: StorageContext,
 
-    pub fn init(db: Database) Repository {
-        return .{ .db = db };
+    pub fn init(storage: StorageContext) Repository {
+        return .{ .storage = storage };
     }
 
     pub fn list(self: Repository, allocator: std.mem.Allocator, params: ListParams) !Page {
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
-        const total_entries = try countUsers(self.db);
+        const total_entries = try countUsers(self.storage);
         const sort_column = try sqlSortColumn(params.sort_by);
         const sort_direction = sqlSortDirection(params.sort_order);
 
@@ -60,7 +60,7 @@ pub const Repository = struct {
                 "FROM users ORDER BY {s} {s}, id {s} LIMIT ? OFFSET ?;",
             .{ sort_column, sort_direction, sort_direction },
         );
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindInt64(1, params.page_size);
@@ -86,11 +86,11 @@ pub const Repository = struct {
     }
 
     pub fn get(self: Repository, allocator: std.mem.Allocator, name: []const u8) !?Record {
-        self.db.lock();
-        defer self.db.unlock();
+        self.storage.lock();
+        defer self.storage.unlock();
 
         const sql = "SELECT id, name, scope_json, created_at, updated_at FROM users WHERE name = ?;";
-        const stmt = try self.db.prepare(sql);
+        const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, name);
@@ -112,8 +112,8 @@ pub fn scopesPage(params: ListParams) ScopePage {
     return ScopePage.init(@constCast(all_scopes[start..end]), params, all_scopes.len);
 }
 
-fn countUsers(db: Database) !usize {
-    const stmt = try db.prepare("SELECT COUNT(*) FROM users;");
+fn countUsers(storage: StorageContext) !usize {
+    const stmt = try storage.prepare("SELECT COUNT(*) FROM users;");
     defer stmt.deinit();
 
     try stmt.expectRow();

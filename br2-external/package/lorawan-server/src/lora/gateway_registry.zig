@@ -5,7 +5,7 @@ const app_mod = @import("../app.zig");
 const event_repository = @import("../repository/event_repository.zig");
 const gateway_repository = @import("../repository/gateway_repository.zig");
 const App = app_mod.App;
-const Database = app_mod.Database;
+const StorageContext = app_mod.StorageContext;
 
 pub const GatewayTarget = gateway_repository.GatewayTarget;
 pub const RuntimeRecord = gateway_repository.RuntimeRecord;
@@ -14,7 +14,7 @@ pub const Registry = struct {
     gateway_repo: gateway_repository.Repository,
     event_repo: event_repository.Repository,
 
-    pub fn init(db: Database) Registry {
+    pub fn init(db: StorageContext) Registry {
         return .{
             .gateway_repo = gateway_repository.Repository.init(db),
             .event_repo = event_repository.Repository.init(db),
@@ -71,7 +71,7 @@ test "registry stores pull target with semtech version" {
         .zero = [_]u8{0} ** 8,
     };
 
-    const registry = Registry.init(app.app.database());
+    const registry = Registry.init(app.app.storage());
     try registry.rememberPullTarget(gateway_mac, 1, &client_addr);
 
     const target = try registry.readTarget(gateway_mac);
@@ -95,7 +95,7 @@ test "registry lists runtime snapshots and clears pending state" {
         .zero = [_]u8{0} ** 8,
     };
 
-    const registry = Registry.init(app.app.database());
+    const registry = Registry.init(app.app.storage());
     try registry.touch(gateway_mac, 1, &client_addr);
     try registry.rememberPending(gateway_mac, 0xCAFE, "{\"txpk\":{}}");
 
