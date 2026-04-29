@@ -2,7 +2,7 @@ const std = @import("std");
 
 const app_mod = @import("../app.zig");
 const crud_repository = @import("crud_repository.zig");
-const storage = @import("../storage.zig");
+const db_mod = @import("../db.zig");
 const Database = app_mod.Database;
 const ListParams = crud_repository.ListParams;
 const SortOrder = crud_repository.SortOrder;
@@ -106,7 +106,7 @@ pub const Repository = struct {
             out.deinit(allocator);
         }
 
-        while (stmt.step() == storage.c.SQLITE_ROW) {
+        while (stmt.step() == .row) {
             try out.append(allocator, try rowToRecord(allocator, stmt));
         }
 
@@ -124,7 +124,7 @@ pub const Repository = struct {
         defer stmt.deinit();
 
         stmt.bindInt64(1, id);
-        if (stmt.step() != storage.c.SQLITE_ROW) return null;
+        if (stmt.step() != .row) return null;
         return try rowToRecord(allocator, stmt);
     }
 
@@ -229,7 +229,7 @@ pub const Repository = struct {
             out.deinit(allocator);
         }
 
-        while (stmt.step() == storage.c.SQLITE_ROW) {
+        while (stmt.step() == .row) {
             try out.append(allocator, try rowToRecord(allocator, stmt));
         }
 
@@ -241,7 +241,7 @@ pub fn crud(db: Database) CRUDRepository {
     return CRUDRepository.bind(Repository, db);
 }
 
-fn rowToRecord(allocator: std.mem.Allocator, stmt: storage.Statement) !Record {
+fn rowToRecord(allocator: std.mem.Allocator, stmt: db_mod.Statement) !Record {
     return .{
         .id = stmt.readInt64(0),
         .name = try allocator.dupe(u8, stmt.readText(1) orelse ""),
@@ -258,7 +258,7 @@ fn rowToRecord(allocator: std.mem.Allocator, stmt: storage.Statement) !Record {
     };
 }
 
-fn bindWriteInput(stmt: storage.Statement, input: WriteInput) void {
+fn bindWriteInput(stmt: db_mod.Statement, input: WriteInput) void {
     stmt.bindText(1, input.name);
     stmt.bindText(2, input.connector_type);
     stmt.bindText(3, input.uri);
@@ -299,12 +299,12 @@ fn sqlSortDirection(sort_order: SortOrder) []const u8 {
     };
 }
 
-fn dupOptionalText(allocator: std.mem.Allocator, stmt: storage.Statement, column: c_int) !?[]u8 {
+fn dupOptionalText(allocator: std.mem.Allocator, stmt: db_mod.Statement, column: c_int) !?[]u8 {
     const text = stmt.readText(column) orelse return null;
     return try allocator.dupe(u8, text);
 }
 
-fn bindOptionalText(stmt: storage.Statement, index: c_int, value: ?[]const u8) void {
+fn bindOptionalText(stmt: db_mod.Statement, index: c_int, value: ?[]const u8) void {
     if (value) |text| stmt.bindText(index, text) else stmt.bindNull(index);
 }
 

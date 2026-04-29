@@ -2,7 +2,6 @@ const std = @import("std");
 
 const app_mod = @import("../app.zig");
 const crud_repository = @import("crud_repository.zig");
-const storage = @import("../storage.zig");
 
 const Database = app_mod.Database;
 const ListParams = crud_repository.ListParams;
@@ -64,7 +63,7 @@ pub const Repository = struct {
             out.deinit(allocator);
         }
 
-        while (stmt.step() == storage.c.SQLITE_ROW) {
+        while (stmt.step() == .row) {
             const created_at = stmt.readText(1) orelse "";
             try out.append(allocator, .{
                 .evid = stmt.readInt64(0),

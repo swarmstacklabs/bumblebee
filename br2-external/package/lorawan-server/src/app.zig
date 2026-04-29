@@ -18,7 +18,6 @@ pub const env_metrics_cleanup_period = config.env_metrics_cleanup_period;
 pub const AdminConfig = config.AdminConfig;
 pub const Config = config.Config;
 
-pub const c = storage.c;
 pub const StatusResponse = storage.StatusResponse;
 pub const ErrorResponse = storage.ErrorResponse;
 pub const SystemMemoryUsage = storage.SystemMemoryUsage;

@@ -2,7 +2,7 @@ const std = @import("std");
 
 const app_mod = @import("../app.zig");
 const crud_repository = @import("crud_repository.zig");
-const storage = @import("../storage.zig");
+const db_mod = @import("../db.zig");
 const Database = app_mod.Database;
 const ListParams = crud_repository.ListParams;
 const SortOrder = crud_repository.SortOrder;
@@ -76,7 +76,7 @@ pub const Repository = struct {
             out.deinit(allocator);
         }
 
-        while (stmt.step() == storage.c.SQLITE_ROW) {
+        while (stmt.step() == .row) {
             try out.append(allocator, try rowToRecord(allocator, stmt));
         }
 
@@ -92,7 +92,7 @@ pub const Repository = struct {
         defer stmt.deinit();
 
         stmt.bindText(1, mac);
-        if (stmt.step() != storage.c.SQLITE_ROW) return null;
+        if (stmt.step() != .row) return null;
         return try rowToRecord(allocator, stmt);
     }
 
@@ -182,7 +182,7 @@ fn sqlSortDirection(sort_order: SortOrder) []const u8 {
     };
 }
 
-fn rowToRecord(allocator: std.mem.Allocator, stmt: storage.Statement) !Record {
+fn rowToRecord(allocator: std.mem.Allocator, stmt: db_mod.Statement) !Record {
     return .{
         .id = stmt.readInt64(0),
         .mac = try allocator.dupe(u8, stmt.readText(1) orelse ""),

@@ -2,7 +2,7 @@ const std = @import("std");
 
 const app_mod = @import("../app.zig");
 const crud_repository = @import("crud_repository.zig");
-const storage = @import("../storage.zig");
+const db_mod = @import("../db.zig");
 const Database = app_mod.Database;
 const DeviceRecord = app_mod.DeviceRecord;
 const DeviceWriteInput = app_mod.DeviceWriteInput;
@@ -47,7 +47,7 @@ pub const Repository = struct {
             out.deinit(allocator);
         }
 
-        while (stmt.step() == storage.c.SQLITE_ROW) {
+        while (stmt.step() == .row) {
             try out.append(allocator, try rowToDevice(allocator, stmt));
         }
 
@@ -63,7 +63,7 @@ pub const Repository = struct {
         defer stmt.deinit();
 
         stmt.bindInt64(1, id);
-        if (stmt.step() != storage.c.SQLITE_ROW) return null;
+        if (stmt.step() != .row) return null;
 
         return try rowToDevice(allocator, stmt);
     }
@@ -148,7 +148,7 @@ fn sqlSortDirection(sort_order: SortOrder) []const u8 {
     };
 }
 
-fn rowToDevice(allocator: std.mem.Allocator, stmt: storage.Statement) !DeviceRecord {
+fn rowToDevice(allocator: std.mem.Allocator, stmt: db_mod.Statement) !DeviceRecord {
     return DeviceRecord.init(
         stmt.readInt64(0),
         try dupColumnText(allocator, stmt, 1),
@@ -160,7 +160,7 @@ fn rowToDevice(allocator: std.mem.Allocator, stmt: storage.Statement) !DeviceRec
     );
 }
 
-fn dupColumnText(allocator: std.mem.Allocator, stmt: storage.Statement, column: c_int) ![]u8 {
+fn dupColumnText(allocator: std.mem.Allocator, stmt: db_mod.Statement, column: c_int) ![]u8 {
     const value = stmt.readText(column) orelse return allocator.alloc(u8, 0);
     return allocator.dupe(u8, value);
 }

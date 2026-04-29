@@ -3,7 +3,7 @@ const posix = std.posix;
 
 const app_mod = @import("../app.zig");
 const packets = @import("../lora/packets.zig");
-const storage = @import("../storage.zig");
+const db_mod = @import("../db.zig");
 const Database = app_mod.Database;
 
 pub const GatewayTarget = struct {
@@ -151,7 +151,7 @@ pub const Repository = struct {
         defer stmt.deinit();
 
         stmt.bindText(1, gateway_hex[0..]);
-        if (stmt.step() != storage.c.SQLITE_ROW) return error.GatewayNotConnected;
+        if (stmt.step() != .row) return error.GatewayNotConnected;
 
         const ip_text = stmt.readText(0) orelse return error.GatewayNotConnected;
         const port = stmt.readInt(1);
@@ -187,7 +187,7 @@ pub const Repository = struct {
         defer stmt.deinit();
 
         stmt.bindText(1, gateway_hex[0..]);
-        if (stmt.step() != storage.c.SQLITE_ROW) return null;
+        if (stmt.step() != .row) return null;
 
         return RuntimeRecord.init(
             gateway_mac,
@@ -219,7 +219,7 @@ pub const Repository = struct {
             out.deinit(allocator);
         }
 
-        while (stmt.step() == storage.c.SQLITE_ROW) {
+        while (stmt.step() == .row) {
             const gateway_hex = stmt.readText(0) orelse return error.InvalidGatewayMac;
             try out.append(allocator, RuntimeRecord.init(
                 try parseGatewayMacHex(gateway_hex),
@@ -285,25 +285,25 @@ fn parseGatewayMacHex(text: []const u8) ![8]u8 {
     return out;
 }
 
-fn dupOptionalText(allocator: std.mem.Allocator, stmt: storage.Statement, column: c_int) !?[]u8 {
+fn dupOptionalText(allocator: std.mem.Allocator, stmt: db_mod.Statement, column: c_int) !?[]u8 {
     const value = stmt.readText(column) orelse return null;
     return try allocator.dupe(u8, value);
 }
 
-fn optionalI64Column(stmt: storage.Statement, column: c_int) ?i64 {
-    if (stmt.columnType(column) == storage.c.SQLITE_NULL) return null;
+fn optionalI64Column(stmt: db_mod.Statement, column: c_int) ?i64 {
+    if (stmt.columnType(column) == .null) return null;
     return stmt.readInt64(column);
 }
 
-fn optionalU16Column(stmt: storage.Statement, column: c_int) ?u16 {
-    if (stmt.columnType(column) == storage.c.SQLITE_NULL) return null;
+fn optionalU16Column(stmt: db_mod.Statement, column: c_int) ?u16 {
+    if (stmt.columnType(column) == .null) return null;
     const value = stmt.readInt(column);
     if (value < 0 or value > std.math.maxInt(u16)) return null;
     return @intCast(value);
 }
 
-fn optionalU8Column(stmt: storage.Statement, column: c_int) ?u8 {
-    if (stmt.columnType(column) == storage.c.SQLITE_NULL) return null;
+fn optionalU8Column(stmt: db_mod.Statement, column: c_int) ?u8 {
+    if (stmt.columnType(column) == .null) return null;
     const value = stmt.readInt(column);
     if (value < 0 or value > std.math.maxInt(u8)) return null;
     return @intCast(value);

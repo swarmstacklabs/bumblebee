@@ -2,7 +2,6 @@ const std = @import("std");
 
 const app_mod = @import("../app.zig");
 const region_mod = @import("../lora/region.zig");
-const storage = @import("../storage.zig");
 const types = @import("../lora/types.zig");
 const Database = app_mod.Database;
 
@@ -23,7 +22,7 @@ pub const Repository = struct {
         const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
         stmt.bindText(1, gateway_mac_hex);
-        if (stmt.step() != storage.c.SQLITE_ROW) return null;
+        if (stmt.step() != .row) return null;
 
         const network_name = stmt.readText(1) orelse return null;
         const gateway_json = stmt.readText(2) orelse "{}";
@@ -45,7 +44,7 @@ pub const Repository = struct {
         const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
         stmt.bindText(1, name);
-        if (stmt.step() != storage.c.SQLITE_ROW) return null;
+        if (stmt.step() != .row) return null;
 
         const json_text = stmt.readText(1) orelse "{}";
         const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_text, .{ .ignore_unknown_fields = true });
@@ -77,7 +76,7 @@ pub const Repository = struct {
         const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
         stmt.bindText(1, dev_eui_hex);
-        if (stmt.step() != storage.c.SQLITE_ROW) return null;
+        if (stmt.step() != .row) return null;
 
         const json_text = stmt.readText(5) orelse "{}";
         const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_text, .{ .ignore_unknown_fields = true });
@@ -126,7 +125,7 @@ pub const Repository = struct {
         const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
         stmt.bindText(1, dev_addr_hex);
-        if (stmt.step() != storage.c.SQLITE_ROW) return null;
+        if (stmt.step() != .row) return null;
 
         const json_text = stmt.readText(2) orelse "{}";
         const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json_text, .{ .ignore_unknown_fields = true });
@@ -148,7 +147,7 @@ pub const Repository = struct {
             },
         );
         node.id = stmt.readInt64(0);
-        node.device_id = if (stmt.columnType(1) == storage.c.SQLITE_NULL) null else stmt.readInt64(1);
+        node.device_id = if (stmt.columnType(1) == .null) null else stmt.readInt64(1);
         node.dev_eui = if (jsonOptionalString(object, "dev_eui")) |value| try parseHexArray(8, value) else null;
         node.f_cnt_up = jsonOptionalU32(object, "fcntup");
         node.f_cnt_down = jsonOptionalU32(object, "fcntdown") orelse 0;

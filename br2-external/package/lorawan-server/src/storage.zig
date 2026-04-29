@@ -9,6 +9,40 @@ pub const c = @cImport({
 pub const Statement = struct {
     raw: *c.sqlite3_stmt,
 
+    pub const Step = enum {
+        row,
+        done,
+        other,
+
+        fn fromSqlite(value: c_int) Step {
+            return switch (value) {
+                c.SQLITE_ROW => .row,
+                c.SQLITE_DONE => .done,
+                else => .other,
+            };
+        }
+    };
+
+    pub const ColumnType = enum {
+        integer,
+        float,
+        text,
+        blob,
+        null,
+        other,
+
+        fn fromSqlite(value: c_int) ColumnType {
+            return switch (value) {
+                c.SQLITE_INTEGER => .integer,
+                c.SQLITE_FLOAT => .float,
+                c.SQLITE_TEXT => .text,
+                c.SQLITE_BLOB => .blob,
+                c.SQLITE_NULL => .null,
+                else => .other,
+            };
+        }
+    };
+
     pub fn init(raw: *c.sqlite3_stmt) Statement {
         return .{ .raw = raw };
     }
@@ -41,16 +75,16 @@ pub const Statement = struct {
         _ = c.sqlite3_bind_null(self.raw, index);
     }
 
-    pub fn step(self: Statement) c_int {
-        return c.sqlite3_step(self.raw);
+    pub fn step(self: Statement) Step {
+        return Step.fromSqlite(c.sqlite3_step(self.raw));
     }
 
     pub fn expectDone(self: Statement) !void {
-        if (self.step() != c.SQLITE_DONE) return error.SqliteStepFailed;
+        if (self.step() != .done) return error.SqliteStepFailed;
     }
 
     pub fn expectRow(self: Statement) !void {
-        if (self.step() != c.SQLITE_ROW) return error.SqliteStepFailed;
+        if (self.step() != .row) return error.SqliteStepFailed;
     }
 
     pub fn readInt(self: Statement, column: c_int) c_int {
@@ -66,8 +100,8 @@ pub const Statement = struct {
         return std.mem.span(value);
     }
 
-    pub fn columnType(self: Statement, column: c_int) c_int {
-        return c.sqlite3_column_type(self.raw, column);
+    pub fn columnType(self: Statement, column: c_int) ColumnType {
+        return ColumnType.fromSqlite(c.sqlite3_column_type(self.raw, column));
     }
 };
 
