@@ -9,7 +9,8 @@ const DeviceWriteInput = app_mod.DeviceWriteInput;
 const ListParams = crud_repository.ListParams;
 const SortOrder = crud_repository.SortOrder;
 
-pub const CRUDRepository = crud_repository.Interface(DeviceRecord, DeviceWriteInput, i64);
+pub const CRUDRepository = crud_repository.interface(DeviceRecord, DeviceWriteInput, i64);
+const Page = CRUDRepository.Page;
 
 pub const Repository = struct {
     storage: StorageContext,
@@ -20,7 +21,7 @@ pub const Repository = struct {
 
     pub fn deinit(_: Repository) void {}
 
-    pub fn list(self: Repository, allocator: std.mem.Allocator, params: ListParams) !CRUDRepository.Page {
+    pub fn list(self: Repository, allocator: std.mem.Allocator, params: ListParams) !Page {
         self.storage.lock();
         defer self.storage.unlock();
 

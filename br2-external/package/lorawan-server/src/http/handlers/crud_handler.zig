@@ -7,7 +7,7 @@ const crud_repository = @import("../../repository/crud_repository.zig");
 const StatusResponse = app_mod.StatusResponse;
 const ErrorResponse = app_mod.ErrorResponse;
 
-pub fn Interface(comptime Record: type, comptime WriteInput: type, comptime Id: type, comptime Repository: type) type {
+pub fn interface(comptime Record: type, comptime WriteInput: type, comptime Id: type, comptime Repository: type) type {
     _ = Record;
     _ = WriteInput;
 
@@ -260,7 +260,7 @@ test "CRUDHandler forwards operations to implementation" {
         }
     };
 
-    const CrudHandler = Interface(Record, WriteInput, i64, Repo);
+    const CrudHandler = interface(Record, WriteInput, i64, Repo);
     const Handler = CrudHandler.bind(FakeHandler);
 
     State.last_created_name = null;
@@ -356,7 +356,7 @@ test "CRUDHandler emits not found and conflict responses" {
         }
     };
 
-    const CrudHandler = Interface(Record, WriteInput, i64, Repo);
+    const CrudHandler = interface(Record, WriteInput, i64, Repo);
     const Handler = CrudHandler.bind(FakeHandler);
 
     var get_ctx = testContext(testing.allocator, .GET, "/devices/1", "", "1");
@@ -433,7 +433,7 @@ test "CRUDHandler rejects invalid paging and sorting query params" {
         }
     };
 
-    const CrudHandler = Interface(Record, WriteInput, i64, Repo);
+    const CrudHandler = interface(Record, WriteInput, i64, Repo);
     const Handler = CrudHandler.bind(FakeHandler);
 
     var bad_page_ctx = testContext(testing.allocator, .GET, "/devices?page=0", "", null);

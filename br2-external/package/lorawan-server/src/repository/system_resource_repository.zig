@@ -7,29 +7,58 @@ const SystemResourcesRecord = app_mod.SystemResourcesRecord;
 const SystemMemoryUsage = app_mod.SystemMemoryUsage;
 const CpuUsage = app_mod.CpuUsage;
 
-pub const ReadOnlyRepository = read_only_repository.Interface(SystemResourcesRecord);
+const paging_module = @import("paging.zig");
+const ListParams = paging_module.ListParams;
+
+pub const ReadOnlyRepository = read_only_repository.interface(SystemResourcesRecord, []const u8);
+const Page = ReadOnlyRepository.Page;
 
 pub const Repository = struct {
-    pub fn get(allocator: std.mem.Allocator) !SystemResourcesRecord {
-        const meminfo = try readProcFile(allocator, "/proc/meminfo", 4096);
-        defer allocator.free(meminfo);
+    pub fn init() Repository {
+        return .{};
+    }
 
-        const status = try readProcFile(allocator, "/proc/self/status", 4096);
-        defer allocator.free(status);
+    pub fn deinit(_: Repository) void {}
 
-        const stat = try readProcFile(allocator, "/proc/self/stat", 4096);
-        defer allocator.free(stat);
+    pub fn get(_: Repository, allocator: std.mem.Allocator, _: []const u8) !SystemResourcesRecord {
+        return getSystemResources(allocator);
+    }
 
-        const uptime_text = try readProcFile(allocator, "/proc/uptime", 256);
-        defer allocator.free(uptime_text);
+    pub fn list(_: Repository, allocator: std.mem.Allocator, params: ListParams) !Page {
+        const systemResource = try getSystemResources(allocator);
 
-        const memory = try parseMemoryUsage(meminfo, status);
-        const cpu = try parseCpuUsage(stat, uptime_text);
-        const uptime_ms = try parseProcessUptimeMs(stat, uptime_text);
+        var out = std.ArrayList(SystemResourcesRecord){};
 
-        return SystemResourcesRecord.init(uptime_ms, memory, cpu);
+        errdefer {
+            for (out.items) |item| item.deinit(allocator);
+            out.deinit(allocator);
+        }
+
+        try out.append(allocator, systemResource);
+
+        return ReadOnlyRepository.Page.init(try out.toOwnedSlice(allocator), params, 1);
     }
 };
+
+fn getSystemResources(allocator: std.mem.Allocator) !SystemResourcesRecord {
+    const meminfo = try readProcFile(allocator, "/proc/meminfo", 4096);
+    defer allocator.free(meminfo);
+
+    const status = try readProcFile(allocator, "/proc/self/status", 4096);
+    defer allocator.free(status);
+
+    const stat = try readProcFile(allocator, "/proc/self/stat", 4096);
+    defer allocator.free(stat);
+
+    const uptime_text = try readProcFile(allocator, "/proc/uptime", 256);
+    defer allocator.free(uptime_text);
+
+    const memory = try parseMemoryUsage(meminfo, status);
+    const cpu = try parseCpuUsage(stat, uptime_text);
+    const uptime_ms = try parseProcessUptimeMs(stat, uptime_text);
+
+    return SystemResourcesRecord.init(uptime_ms, memory, cpu);
+}
 
 pub fn readOnly() ReadOnlyRepository {
     return ReadOnlyRepository.bind(Repository);

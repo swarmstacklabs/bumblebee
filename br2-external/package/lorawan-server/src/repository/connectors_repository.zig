@@ -60,7 +60,7 @@ pub const WriteInput = struct {
     }
 };
 
-pub const CRUDRepository = crud_repository.Interface(Record, WriteInput, i64);
+pub const CRUDRepository = crud_repository.interface(Record, WriteInput, i64);
 
 pub const Repository = struct {
     storage: StorageContext,

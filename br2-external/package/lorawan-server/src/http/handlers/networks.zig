@@ -6,7 +6,7 @@ const context_mod = @import("../context.zig");
 const crud_repository = @import("../../repository/crud_repository.zig");
 const region_mod = @import("../../lora/region.zig");
 
-pub const CRUDHandler = crud_handler.Interface(
+pub const CRUDHandler = crud_handler.interface(
     networks_repository.Record,
     networks_repository.WriteInput,
     []const u8,

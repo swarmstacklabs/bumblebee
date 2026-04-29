@@ -1,5 +1,7 @@
 const context_mod = @import("../context.zig");
-const crud_repository = @import("../../repository/crud_repository.zig");
+const read_only_repository = @import("../../repository/read_only_repository.zig");
+
+const ListParams = read_only_repository.ListParams;
 
 const ModuleVersions = struct {
     bumblebee: []const u8 = "local",
@@ -22,26 +24,26 @@ const ServerRecord = struct {
 };
 
 pub fn list(ctx: *context_mod.Context) !void {
-    const resources = try ctx.services.system_resource_repo.get(ctx.allocator);
+    const params = ListParams{
+        .page = 1,
+        .page_size = 50,
+        .sort_by = "sname",
+        .sort_order = .asc,
+    };
+    const resources = try ctx.services.system_resource_repo.get(ctx.allocator, "local");
     const entries = [_]ServerRecord{.{
         .memory = .{
             .total_memory = resources.memory.total_bytes,
             .free_memory = resources.memory.available_bytes,
         },
     }};
-    const params = crud_repository.ListParams{
-        .page = 1,
-        .page_size = 1,
-        .sort_by = "sname",
-        .sort_order = .asc,
-    };
-    const page = crud_repository.ListPage(ServerRecord).init(@constCast(entries[0..]), params, entries.len);
+    const page = read_only_repository.ListPage(ServerRecord).init(@constCast(entries[0..]), params, entries.len);
     try ctx.res.setJson(page);
 }
 
 pub fn get(ctx: *context_mod.Context) !void {
-    _ = ctx.param("id") orelse return error.BadRequest;
-    const resources = try ctx.services.system_resource_repo.get(ctx.allocator);
+    const id = ctx.param("id") orelse return error.BadRequest;
+    const resources = try ctx.services.system_resource_repo.get(ctx.allocator, id);
     try ctx.res.setJson(ServerRecord{ .memory = .{
         .total_memory = resources.memory.total_bytes,
         .free_memory = resources.memory.available_bytes,

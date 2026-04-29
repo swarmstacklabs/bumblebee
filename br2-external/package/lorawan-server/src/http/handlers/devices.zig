@@ -6,7 +6,7 @@ const crud_handler = @import("crud_handler.zig");
 const context_mod = @import("../context.zig");
 const crud_repository = @import("../../repository/crud_repository.zig");
 
-pub const CRUDHandler = crud_handler.Interface(
+pub const CRUDHandler = crud_handler.interface(
     app_mod.DeviceRecord,
     app_mod.DeviceWriteInput,
     i64,

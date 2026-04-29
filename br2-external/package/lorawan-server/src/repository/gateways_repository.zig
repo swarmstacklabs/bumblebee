@@ -38,7 +38,7 @@ pub const WriteInput = struct {
     }
 };
 
-pub const CRUDRepository = crud_repository.Interface(Record, WriteInput, []const u8);
+pub const CRUDRepository = crud_repository.interface(Record, WriteInput, []const u8);
 
 pub const Repository = struct {
     storage: StorageContext,

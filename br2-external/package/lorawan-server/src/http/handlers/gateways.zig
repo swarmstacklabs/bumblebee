@@ -5,7 +5,7 @@ const crud_handler = @import("crud_handler.zig");
 const context_mod = @import("../context.zig");
 const crud_repository = @import("../../repository/crud_repository.zig");
 
-pub const CRUDHandler = crud_handler.Interface(
+pub const CRUDHandler = crud_handler.interface(
     gateways_repository.Record,
     gateways_repository.WriteInput,
     []const u8,

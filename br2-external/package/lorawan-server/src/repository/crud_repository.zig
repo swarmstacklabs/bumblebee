@@ -3,52 +3,13 @@ const std = @import("std");
 const app_mod = @import("../app.zig");
 const StorageContext = app_mod.StorageContext;
 
-pub const SortOrder = enum {
-    asc,
-    desc,
-};
+const paging_mod = @import("paging.zig");
+pub const SortOrder = paging_mod.SortOrder;
+pub const ListParams = paging_mod.ListParams;
+pub const ListPage = paging_mod.ListPage;
+const totalPages = paging_mod.totalPages;
 
-pub const ListParams = struct {
-    page: usize = 1,
-    page_size: usize = 50,
-    sort_by: []const u8,
-    sort_order: SortOrder,
-
-    pub fn offset(self: ListParams) usize {
-        return (self.page - 1) * self.page_size;
-    }
-};
-
-pub fn ListPage(comptime Record: type) type {
-    return struct {
-        entries: []Record,
-        page_number: usize,
-        page_size: usize,
-        total_entries: usize,
-        total_pages: usize,
-        sort_by: []const u8,
-        sort_order: SortOrder,
-
-        pub fn init(entries: []Record, params: ListParams, total_entries: usize) @This() {
-            return .{
-                .entries = entries,
-                .page_number = params.page,
-                .page_size = params.page_size,
-                .total_entries = total_entries,
-                .total_pages = totalPages(total_entries, params.page_size),
-                .sort_by = params.sort_by,
-                .sort_order = params.sort_order,
-            };
-        }
-    };
-}
-
-pub fn totalPages(total_entries: usize, page_size: usize) usize {
-    if (total_entries == 0) return 0;
-    return (total_entries + page_size - 1) / page_size;
-}
-
-pub fn Interface(comptime Record: type, comptime WriteInput: type, comptime Id: type) type {
+pub fn interface(comptime Record: type, comptime WriteInput: type, comptime Id: type) type {
     return struct {
         const Self = @This();
         pub const Page = ListPage(Record);
@@ -156,7 +117,7 @@ test "CRUDRepository forwards operations to implementation" {
             return .{ .storage = storage };
         }
 
-        pub fn list(self: @This(), allocator: std.mem.Allocator, params: ListParams) !Interface(Record, WriteInput, i64).Page {
+        pub fn list(self: @This(), allocator: std.mem.Allocator, params: ListParams) !interface(Record, WriteInput, i64).Page {
             _ = self;
             try testing.expectEqual(@as(usize, 2), params.page);
             try testing.expectEqual(@as(usize, 10), params.page_size);
@@ -165,7 +126,7 @@ test "CRUDRepository forwards operations to implementation" {
 
             var records = try allocator.alloc(Record, 1);
             records[0] = .{ .id = 1, .name = "device-a" };
-            return Interface(Record, WriteInput, i64).Page.init(records, params, 31);
+            return interface(Record, WriteInput, i64).Page.init(records, params, 31);
         }
 
         pub fn get(self: @This(), allocator: std.mem.Allocator, id: i64) !?Record {
@@ -206,7 +167,7 @@ test "CRUDRepository forwards operations to implementation" {
 
     const db = StorageContext.init(testing.allocator, undefined);
 
-    const CrudRepository = Interface(Record, WriteInput, i64);
+    const CrudRepository = interface(Record, WriteInput, i64);
     const repo = CrudRepository.bind(FakeRepository, db);
 
     const page = try repo.list(testing.allocator, .{
@@ -260,7 +221,7 @@ test "CRUDRepository propagates implementation errors" {
             return .{ .storage = storage };
         }
 
-        pub fn list(self: @This(), allocator: std.mem.Allocator, params: ListParams) !Interface(Record, WriteInput, i64).Page {
+        pub fn list(self: @This(), allocator: std.mem.Allocator, params: ListParams) !interface(Record, WriteInput, i64).Page {
             _ = self;
             _ = allocator;
             _ = params;
@@ -296,7 +257,7 @@ test "CRUDRepository propagates implementation errors" {
 
     const db = StorageContext.init(testing.allocator, undefined);
 
-    const CrudRepository = Interface(Record, WriteInput, i64);
+    const CrudRepository = interface(Record, WriteInput, i64);
     const repo = CrudRepository.bind(FakeRepository, db);
 
     try testing.expectError(error.ListFailed, repo.list(testing.allocator, .{

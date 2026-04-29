@@ -193,7 +193,8 @@ pub const SystemMemoryUsage = struct {
         };
     }
 
-    pub fn deinit(_: SystemMemoryUsage) void {}
+    pub fn deinit(_: SystemMemoryUsage, _: std.mem.Allocator) void {
+    }
 };
 
 pub const CpuUsage = struct {
@@ -211,7 +212,8 @@ pub const CpuUsage = struct {
         };
     }
 
-    pub fn deinit(_: CpuUsage) void {}
+    pub fn deinit(_: CpuUsage, _: std.mem.Allocator) void {
+    }
 };
 
 pub const SystemResourcesRecord = struct {
@@ -227,7 +229,10 @@ pub const SystemResourcesRecord = struct {
         };
     }
 
-    pub fn deinit(_: SystemResourcesRecord) void {}
+    pub fn deinit(self: SystemResourcesRecord, allocator: std.mem.Allocator) void {
+        self.memory.deinit(allocator);
+        self.cpu.deinit(allocator);
+    }
 };
 
 pub const DeviceRecord = struct {

@@ -3,7 +3,7 @@ const system_resource_repository = @import("../../repository/system_resource_rep
 const read_only_handler = @import("read_only_handler.zig");
 const context_mod = @import("../context.zig");
 
-pub const ReadOnlyHandler = read_only_handler.Interface(
+pub const ReadOnlyHandler = read_only_handler.interface(
     app_mod.SystemResourcesRecord,
     system_resource_repository.ReadOnlyRepository,
 );
@@ -17,3 +17,4 @@ const Handler = ReadOnlyHandler.bind(struct {
 });
 
 pub const get = Handler.get;
+pub const list = Handler.list;
