@@ -38,11 +38,11 @@ pub const Context = struct {
         try self.response_commands.append(self.allocator, command);
     }
 
-    pub fn setUserData(self: *Context, ptr: anytype) void {
+    pub fn setData(self: *Context, ptr: anytype) void {
         const Ptr = @TypeOf(ptr);
         const info = @typeInfo(Ptr);
         if (info != .pointer or info.pointer.size != .one) {
-            @compileError("setUserData expects a single-item pointer");
+            @compileError("setData expects a single-item pointer");
         }
 
         self.user_data = @ptrCast(ptr);
@@ -76,7 +76,7 @@ test "context exposes typed user data" {
     var ctx = Context.init(std.testing.allocator);
     defer ctx.deinit();
 
-    ctx.setUserData(&state);
+    ctx.setData(&state);
     ctx.data(State).value += 1;
 
     try std.testing.expectEqual(@as(u8, 8), state.value);

@@ -73,7 +73,7 @@ pub fn buildResponsesWithMetrics(
         .metrics_repo = metrics_repo,
         .metrics_min_level = logger.currentLevel(),
     };
-    ctx.setUserData(&state);
+    ctx.setData(&state);
 
     try dispatchIgnoringMissing(&ctx, incoming);
     return ctx.response_commands.toOwnedSlice(allocator);
@@ -357,7 +357,7 @@ pub fn applyToNode(allocator: std.mem.Allocator, region: types.Region, node: *ty
     };
     defer state.remaining_pending.deinit(allocator);
     defer state.processed_uplink_commands.deinit(allocator);
-    ctx.setUserData(&state);
+    ctx.setData(&state);
 
     try dispatchIgnoringMissing(&ctx, incoming);
 
@@ -607,7 +607,7 @@ test "node context guard rejects node update command when node is missing" {
         .pending_state_ready = true,
     };
     defer state.remaining_pending.deinit(std.testing.allocator);
-    ctx.setUserData(&state);
+    ctx.setData(&state);
 
     const incoming = [_]commands.Command{
         .duty_cycle_ans,
@@ -629,7 +629,7 @@ test "node context guard rejects node update command when pending state is not i
         .region = .eu868,
     };
     defer state.remaining_pending.deinit(std.testing.allocator);
-    ctx.setUserData(&state);
+    ctx.setData(&state);
 
     const incoming = [_]commands.Command{
         .duty_cycle_ans,
@@ -649,7 +649,7 @@ test "metrics collector tracks per-command success failure and latency" {
         .metrics_min_level = .debug,
     };
     defer state.remaining_pending.deinit(std.testing.allocator);
-    ctx.setUserData(&state);
+    ctx.setData(&state);
 
     const incoming = [_]commands.Command{
         .device_time_req,
@@ -683,7 +683,7 @@ test "metrics collector filters debug successes at info level but keeps anomalie
         .metrics_min_level = .info,
     };
     defer state.remaining_pending.deinit(std.testing.allocator);
-    ctx.setUserData(&state);
+    ctx.setData(&state);
 
     const incoming = [_]commands.Command{
         .device_time_req,
@@ -708,7 +708,7 @@ test "metrics collector keeps failures at info level" {
         .metrics_min_level = .info,
     };
     defer state.remaining_pending.deinit(std.testing.allocator);
-    ctx.setUserData(&state);
+    ctx.setData(&state);
 
     const incoming = [_]commands.Command{
         .{ .dev_status_ans = .{ .battery = 99, .margin = 32 } },

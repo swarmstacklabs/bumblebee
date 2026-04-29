@@ -2,14 +2,14 @@ const std = @import("std");
 const posix = std.posix;
 
 const app_mod = @import("../app.zig");
+const App = app_mod.App;
+const Config = app_mod.Config;
 const connectors = @import("../connectors.zig");
 const event_repository = @import("../repository/event_repository.zig");
 const logger = @import("../logger.zig");
 const lora = @import("../lora.zig");
 const storage = @import("../storage.zig");
 const udp_transport = @import("transport.zig");
-const App = app_mod.App;
-const Config = app_mod.Config;
 const state_repository = lora.state_repository;
 const gateway_registry = lora.gateway_registry;
 const pending_downlinks = lora.pending_downlinks;
@@ -46,6 +46,7 @@ pub const Server = struct {
 
 fn persistAndPublishEvent(app: *App, registry: gateway_registry.Registry, event_type: []const u8, gateway_mac: [8]u8, payload_json: []const u8) !void {
     try registry.insertEvent(event_type, gateway_mac, try app.allocator.dupe(u8, payload_json));
+
     connectors.publishFromStorage(app.allocator, app.storage(), .{
         .event_type = event_type,
         .gateway_mac = gateway_mac,

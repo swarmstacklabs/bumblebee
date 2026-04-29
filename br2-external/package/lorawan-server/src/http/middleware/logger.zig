@@ -5,7 +5,7 @@ const runtime = @import("../runtime.zig");
 const logger = @import("../../logger.zig");
 
 pub fn middleware(ctx: *context_mod.Context, exec: *runtime.Executor) runtime.AppError!void {
-    logger.info("http", "request_started", "http request started", .{
+    logger.debug("http", "request_started", "http request started", .{
         .method = @tagName(ctx.req.method),
         .path = ctx.req.path,
         .request_id = ctx.request_id,
@@ -13,7 +13,7 @@ pub fn middleware(ctx: *context_mod.Context, exec: *runtime.Executor) runtime.Ap
 
     try exec.next(ctx);
 
-    logger.info("http", "request_finished", "http request finished", .{
+    logger.debug("http", "request_finished", "http request finished", .{
         .method = @tagName(ctx.req.method),
         .path = ctx.req.path,
         .status = ctx.res.status.code(),

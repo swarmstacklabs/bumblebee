@@ -83,7 +83,7 @@ test "dispatcher runs middlewares and handler in http-style order" {
 
     var state = State{};
     defer state.deinit(std.testing.allocator);
-    ctx.setUserData(&state);
+    ctx.setData(&state);
 
     const dispatcher = Dispatcher.init(&global_middlewares, router_mod.Router.init(&routes));
     try dispatcher.handle(&ctx, 0, .device_time_req);

@@ -11,6 +11,7 @@ pub fn middleware(ctx: *context_mod.Context, exec: *runtime.Executor) runtime.Ap
     const state = ctx.data(mac_command_state.State);
     const collector = state.metrics_collector;
     const metrics_repo = state.metrics_repo;
+
     if (collector == null and metrics_repo == null) return exec.next(ctx);
 
     const command = try ctx.currentCommand();
@@ -38,9 +39,12 @@ fn observe(
     if (@intFromEnum(level) < @intFromEnum(state.metrics_min_level)) return;
 
     const command_tag = std.meta.activeTag(command);
+    // Collect in-memory metrics (probably not nedded anymore, but leaving for now for easy access in tests and potential future use)
     if (collector) |value| {
         value.observe(command_tag, outcome, latency_ns);
     }
+
+    // Collect in repository
     if (metrics_repo) |repo| {
         repo.insertObservation(@tagName(command_tag), @tagName(outcome), @tagName(level), latency_ns) catch {};
     }
