@@ -4,6 +4,7 @@ const connectors_repository = @import("../../repository/connectors_repository.zi
 const crud_handler = @import("crud_handler.zig");
 const context_mod = @import("../context.zig");
 const crud_repository = @import("../../repository/crud_repository.zig");
+const byte_utils = @import("../../byte_utils.zig");
 
 pub const CRUDHandler = crud_handler.interface(
     connectors_repository.Record,
@@ -72,17 +73,12 @@ fn parseConnectorWriteInput(ctx: *context_mod.Context, body: []const u8) !connec
         .connector_type = try ctx.allocator.dupe(u8, parsed.value.connector_type),
         .uri = try ctx.allocator.dupe(u8, parsed.value.uri),
         .enabled = parsed.value.enabled,
-        .topic = try dupeOptional(ctx.allocator, parsed.value.topic),
-        .exchange_name = try dupeOptional(ctx.allocator, parsed.value.exchange_name orelse parsed.value.exchange),
-        .routing_key = try dupeOptional(ctx.allocator, parsed.value.routing_key),
+        .topic = try byte_utils.dupeOptional(ctx.allocator, parsed.value.topic),
+        .exchange_name = try byte_utils.dupeOptional(ctx.allocator, parsed.value.exchange_name orelse parsed.value.exchange),
+        .routing_key = try byte_utils.dupeOptional(ctx.allocator, parsed.value.routing_key),
         .partition = parsed.value.partition,
-        .client_id = try dupeOptional(ctx.allocator, parsed.value.client_id),
-        .username = try dupeOptional(ctx.allocator, parsed.value.username),
-        .password = try dupeOptional(ctx.allocator, parsed.value.password),
+        .client_id = try byte_utils.dupeOptional(ctx.allocator, parsed.value.client_id),
+        .username = try byte_utils.dupeOptional(ctx.allocator, parsed.value.username),
+        .password = try byte_utils.dupeOptional(ctx.allocator, parsed.value.password),
     };
-}
-
-fn dupeOptional(allocator: std.mem.Allocator, value: ?[]const u8) !?[]const u8 {
-    if (value) |text| return try allocator.dupe(u8, text);
-    return null;
 }

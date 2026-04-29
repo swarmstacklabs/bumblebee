@@ -38,6 +38,11 @@ pub fn writeDevAddrLe(value: [4]u8) [4]u8 {
     return reverseArray(4, value);
 }
 
+pub fn dupeOptional(allocator: std.mem.Allocator, value: ?[]const u8) !?[]const u8 {
+    if (value) |text| return try allocator.dupe(u8, text);
+    return null;
+}
+
 test "big-endian 16-bit read and write" {
     try std.testing.expectEqual(@as(u16, 0xBEEF), readBE16(&[_]u8{ 0xBE, 0xEF }));
 
