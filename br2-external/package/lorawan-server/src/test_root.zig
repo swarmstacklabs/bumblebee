@@ -12,8 +12,8 @@ test {
     _ = @import("byte_utils.zig");
     _ = @import("repository/crud_repository.zig");
     _ = @import("repository/get_only_repository.zig");
-    _ = @import("repository/http_request_metrics_repository.zig");
     _ = @import("repository/read_only_repository.zig");
+    _ = @import("repository/http_request_metrics_repository.zig");
     _ = @import("repository/system_resource_repository.zig");
     _ = @import("udp/udp.zig");
 }

@@ -10,17 +10,17 @@ const router_mod = @import("router.zig");
 const runtime = @import("runtime.zig");
 const services_mod = @import("services.zig");
 
-const frontend_handler = @import("handlers/frontend.zig");
-const health_handler = @import("handlers/health.zig");
-const devices_handler = @import("handlers/devices.zig");
-const gateways_handler = @import("handlers/gateways.zig");
-const networks_handler = @import("handlers/networks.zig");
-const connectors_handler = @import("handlers/connectors.zig");
+const frontend_handler = @import("handlers/frontend_handler.zig");
+const health_handler = @import("handlers/health_handler.zig");
+const devices_handler = @import("handlers/devices_handler.zig");
+const gateways_handler = @import("handlers/gateways_handler.zig");
+const networks_handler = @import("handlers/networks_handler.zig");
+const connectors_handler = @import("handlers/connectors_handler.zig");
 const system_resources_handler = @import("handlers/system_resources.zig");
 const server_handler = @import("handlers/server_handler.zig");
-const events_handler = @import("handlers/events.zig");
-const users_handler = @import("handlers/users.zig");
-const timeline_handler = @import("handlers/timeline.zig");
+const events_handler = @import("handlers/events_handler.zig");
+const users_handler = @import("handlers/users_handler.zig");
+const timeline_handler = @import("handlers/timeline_handler.zig");
 
 const recover_middleware = @import("middleware/recover.zig");
 const logger_middleware = @import("middleware/logger.zig");
