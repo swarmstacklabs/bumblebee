@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 pub const Level = enum {
     debug,
@@ -8,11 +9,18 @@ pub const Level = enum {
 };
 
 var mutex: std.Thread.Mutex = .{};
+var enabled: bool = !builtin.is_test;
 var min_level: Level = .info;
 var file_allocator: ?std.mem.Allocator = null;
 var file_log_dir: ?[]u8 = null;
 
 const ms_per_day: i64 = 24 * 60 * 60 * 1000;
+
+pub fn setEnabled(value: bool) void {
+    mutex.lock();
+    defer mutex.unlock();
+    enabled = value;
+}
 
 pub fn setLevel(level: Level) void {
     mutex.lock();
@@ -69,6 +77,7 @@ pub fn err(scope: []const u8, event: []const u8, message: []const u8, fields: an
 fn log(level: Level, scope: []const u8, event: []const u8, message: []const u8, fields: anytype) void {
     mutex.lock();
     defer mutex.unlock();
+    if (!enabled) return;
     if (@intFromEnum(level) < @intFromEnum(min_level)) return;
 
     const record = .{

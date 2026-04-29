@@ -9,7 +9,7 @@ test {
     _ = @import("http/http.zig");
     _ = @import("lora.zig");
     _ = @import("maintenance.zig");
-    _ = @import("packets.zig");
+    _ = @import("byte_utils.zig");
     _ = @import("repository/crud_repository.zig");
     _ = @import("repository/get_only_repository.zig");
     _ = @import("repository/http_request_metrics_repository.zig");

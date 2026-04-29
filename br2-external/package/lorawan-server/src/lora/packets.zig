@@ -1,5 +1,5 @@
 const std = @import("std");
-const packet_bytes = @import("packet_bytes.zig");
+const byte_utils = @import("../byte_utils.zig");
 
 pub const semtech_version = 1;
 pub const push_data_ident = 0;
@@ -125,7 +125,7 @@ pub fn decodeFrame(allocator: std.mem.Allocator, msg: []const u8) !DecodedFrame 
     if (msg.len < 4) return error.PacketTooShort;
 
     const version = msg[0];
-    const token = packet_bytes.readBE16(msg[1..3]);
+    const token = byte_utils.readBE16(msg[1..3]);
     const ident = msg[3];
 
     switch (ident) {
@@ -211,7 +211,7 @@ pub fn buildPullRespJson(allocator: std.mem.Allocator, req: DownlinkRequest) ![]
 pub fn encodePullResp(allocator: std.mem.Allocator, version: u8, token: u16, json_payload: []const u8) ![]u8 {
     var out = try allocator.alloc(u8, 4 + json_payload.len);
     out[0] = version;
-    packet_bytes.writeBE16(out[1..3], token);
+    byte_utils.writeBE16(out[1..3], token);
     out[3] = pull_resp_ident;
     @memcpy(out[4..], json_payload);
     return out;
@@ -220,7 +220,7 @@ pub fn encodePullResp(allocator: std.mem.Allocator, version: u8, token: u16, jso
 pub fn encodeAck(allocator: std.mem.Allocator, version: u8, token: u16, ident: u8) ![]u8 {
     var out = try allocator.alloc(u8, 4);
     out[0] = version;
-    packet_bytes.writeBE16(out[1..3], token);
+    byte_utils.writeBE16(out[1..3], token);
     out[3] = ident;
     return out;
 }
