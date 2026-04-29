@@ -1,5 +1,9 @@
+const std = @import("std");
+
 const config = @import("config.zig");
-const db_mod = @import("db.zig");
+const Db = @import("db.zig").Db;
+const Database = @import("db.zig").Database;
+const pending_downlinks = @import("lora/pending_downlinks.zig");
 const storage = @import("storage.zig");
 
 pub const default_udp_port = config.default_udp_port;
@@ -25,6 +29,42 @@ pub const CpuUsage = storage.CpuUsage;
 pub const SystemResourcesRecord = storage.SystemResourcesRecord;
 pub const DeviceRecord = storage.DeviceRecord;
 pub const DeviceWriteInput = storage.DeviceWriteInput;
-pub const Db = db_mod.Db;
-pub const Database = db_mod.Database;
-pub const App = storage.App;
+
+pub const App = struct {
+    allocator: std.mem.Allocator,
+    db: *Db,
+    pending_downlinks: pending_downlinks.Tracker,
+
+    pub fn init(allocator: std.mem.Allocator, path: []const u8) !App {
+        var self = App{
+            .allocator = allocator,
+            .db = try storage.SQLiteDb.create(allocator, path),
+            .pending_downlinks = pending_downlinks.Tracker.init(allocator),
+        };
+        errdefer {
+            self.pending_downlinks.deinit();
+            self.db.destroy();
+        }
+
+        try self.exec("PRAGMA foreign_keys = ON;");
+        try self.runMigrations();
+        return self;
+    }
+
+    pub fn deinit(self: *App) void {
+        self.pending_downlinks.deinit();
+        self.db.destroy();
+    }
+
+    pub fn database(self: *App) Database {
+        return Database.init(self.allocator, self.db);
+    }
+
+    pub fn exec(self: *App, sql: []const u8) !void {
+        try self.db.exec(sql);
+    }
+
+    pub fn runMigrations(self: *App) !void {
+        try self.db.runMigrations();
+    }
+};

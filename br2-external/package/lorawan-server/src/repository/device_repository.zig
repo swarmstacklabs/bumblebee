@@ -2,7 +2,7 @@ const std = @import("std");
 
 const app_mod = @import("../app.zig");
 const crud_repository = @import("crud_repository.zig");
-const db_mod = @import("../db.zig");
+const Statement = @import("../db.zig").Statement;
 const Database = app_mod.Database;
 const DeviceRecord = app_mod.DeviceRecord;
 const DeviceWriteInput = app_mod.DeviceWriteInput;
@@ -148,7 +148,7 @@ fn sqlSortDirection(sort_order: SortOrder) []const u8 {
     };
 }
 
-fn rowToDevice(allocator: std.mem.Allocator, stmt: db_mod.Statement) !DeviceRecord {
+fn rowToDevice(allocator: std.mem.Allocator, stmt: Statement) !DeviceRecord {
     return DeviceRecord.init(
         stmt.readInt64(0),
         try dupColumnText(allocator, stmt, 1),
@@ -160,7 +160,7 @@ fn rowToDevice(allocator: std.mem.Allocator, stmt: db_mod.Statement) !DeviceReco
     );
 }
 
-fn dupColumnText(allocator: std.mem.Allocator, stmt: db_mod.Statement, column: c_int) ![]u8 {
+fn dupColumnText(allocator: std.mem.Allocator, stmt: Statement, column: c_int) ![]u8 {
     const value = stmt.readText(column) orelse return allocator.alloc(u8, 0);
     return allocator.dupe(u8, value);
 }

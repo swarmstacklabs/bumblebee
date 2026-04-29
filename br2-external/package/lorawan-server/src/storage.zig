@@ -1,6 +1,5 @@
 const std = @import("std");
 const logger = @import("logger.zig");
-const pending_downlinks = @import("lora/pending_downlinks.zig");
 
 pub const c = @cImport({
     @cInclude("sqlite3.h");
@@ -422,45 +421,6 @@ pub const SQLiteDb = struct {
             }
             return error.SqliteExecFailed;
         }
-    }
-};
-
-pub const App = struct {
-    allocator: std.mem.Allocator,
-    db: *Db,
-    pending_downlinks: pending_downlinks.Tracker,
-
-    pub fn init(allocator: std.mem.Allocator, path: []const u8) !App {
-        var self = App{
-            .allocator = allocator,
-            .db = try SQLiteDb.create(allocator, path),
-            .pending_downlinks = pending_downlinks.Tracker.init(allocator),
-        };
-        errdefer {
-            self.pending_downlinks.deinit();
-            self.db.destroy();
-        }
-
-        try self.exec("PRAGMA foreign_keys = ON;");
-        try self.runMigrations();
-        return self;
-    }
-
-    pub fn deinit(self: *App) void {
-        self.pending_downlinks.deinit();
-        self.db.destroy();
-    }
-
-    pub fn database(self: *App) Database {
-        return Database.init(self.allocator, self.db);
-    }
-
-    pub fn exec(self: *App, sql: []const u8) !void {
-        try self.db.exec(sql);
-    }
-
-    pub fn runMigrations(self: *App) !void {
-        try self.db.runMigrations();
     }
 };
 
