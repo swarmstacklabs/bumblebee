@@ -1,5 +1,5 @@
 const std = @import("std");
-const packet_bytes = @import("../packets.zig");
+const packet_bytes = @import("packet_bytes.zig");
 
 pub const semtech_version = 1;
 pub const push_data_ident = 0;

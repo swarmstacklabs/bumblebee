@@ -111,13 +111,13 @@ pub const Service = struct {
         }
 
         if (frame.f_port == 0 and frame.frm_payload.len > 0) {
-            const parsed = try codec.decodeDataPayloadWithFCnt(allocator, frame, node, node.f_cnt_down);
+            const parsed = try codec.decodeDataPayload(allocator, frame, node);
             defer parsed.deinit(allocator);
             const combined = try appendPendingMacCommands(allocator, node.pending_mac_commands, parsed.decoded_payload);
             if (node.pending_mac_commands) |value| allocator.free(value);
             node.pending_mac_commands = combined;
         } else if (frame.f_port) |port| {
-            const parsed = try codec.decodeDataPayloadWithFCnt(allocator, frame, node, node.f_cnt_down);
+            const parsed = try codec.decodeDataPayload(allocator, frame, node);
             defer parsed.deinit(allocator);
             acknowledgeApplicationDownlink(allocator, &node, frame.confirmed, port, parsed.decoded_payload);
         }
@@ -265,21 +265,23 @@ pub const Service = struct {
             pending_commands,
         );
         defer allocator.free(network_commands);
-        const outgoing_commands = try appendCommands(allocator, response_commands, network_commands);
+        const response_and_pending_commands = try appendCommands(allocator, response_commands, pending_commands);
+        defer allocator.free(response_and_pending_commands);
+        const outgoing_commands = try appendCommands(allocator, response_and_pending_commands, network_commands);
         defer allocator.free(outgoing_commands);
         const queued_application = node.nextQueuedApplicationDownlink();
         const has_queued_application = queued_application != null;
 
         if (outgoing_commands.len > 0 or parsed.confirmed or has_queued_application) {
-            const tx_data = if (queued_application != null and outgoing_commands.len <= 15)
-                queued_application.?
-            else
-                types.TxData.init(false, null, "", has_queued_application);
             const f_opts = if (outgoing_commands.len > 0)
                 try commands.encodeFOpts(allocator, outgoing_commands)
             else
                 try allocator.alloc(u8, 0);
             defer allocator.free(f_opts);
+            const tx_data = if (queued_application != null and f_opts.len <= 15)
+                queued_application.?
+            else
+                types.TxData.init(false, null, "", has_queued_application);
             const phy = try codec.encodeUnicast(allocator, &node, tx_data, f_opts, parsed.confirmed, parsed.adr);
             defer allocator.free(phy);
             downlink = try buildNodeDownlinkRequest(allocator, gateway_mac, gateway, network, rxpk, node, phy);

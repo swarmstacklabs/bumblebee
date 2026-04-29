@@ -195,6 +195,7 @@ pub const Repository = struct {
         node.device_id = device.id;
         node.dev_eui = device.dev_eui;
         node.enabled_channels = try network.region.defaultEnabledChannels(allocator);
+        defer node.deinit(allocator);
         try self.upsertNode(allocator, node);
         return (try self.findNodeByDevAddr(allocator, dev_addr)).?;
     }

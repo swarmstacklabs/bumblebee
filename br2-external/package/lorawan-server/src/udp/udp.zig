@@ -1914,7 +1914,15 @@ fn seedDevice(db: app_mod.StorageContext, name: []const u8, dev_eui: []const u8,
 
 fn seedNode(db: app_mod.StorageContext, dev_addr: [4]u8, app_s_key: [16]u8, nwk_s_key: [16]u8) !void {
     const repo = state_repository.Repository.init(db);
-    const node = lora.types.Node.init(dev_addr, app_s_key, nwk_s_key, .{}, .{ .tx_power = 0, .data_rate = 0 });
+    var node = lora.types.Node.init(
+        dev_addr,
+        app_s_key,
+        nwk_s_key,
+        .{ .rx1_dr_offset = 0, .rx2_data_rate = 0, .frequency = 869.525 },
+        .{ .tx_power = 0, .data_rate = 0 },
+    );
+    node.last_battery = 255;
+    node.last_dev_status_margin = 0;
     try repo.upsertNode(db.allocator, node);
 }
 

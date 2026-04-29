@@ -2,7 +2,7 @@ const std = @import("std");
 const commands = @import("commands.zig");
 const mac_handlers = @import("handlers/mac_handlers.zig");
 const metrics_repository = @import("../repository/mac_command_metrics_repository.zig");
-const packet_bytes = @import("../packets.zig");
+const packet_bytes = @import("packet_bytes.zig");
 const types = @import("types.zig");
 
 const Aes128 = std.crypto.core.aes.Aes128;
