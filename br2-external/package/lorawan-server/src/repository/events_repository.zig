@@ -38,10 +38,10 @@ pub const Repository = struct {
     }
 
     pub fn list(self: Repository, allocator: std.mem.Allocator, params: ListParams) !Page {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
-        const total_entries = try countEvents(self.db.conn);
+        const total_entries = try countEvents(self.db);
         const sort_column = try sqlSortColumn(params.sort_by);
         const sort_direction = sqlSortDirection(params.sort_order);
 
@@ -52,7 +52,7 @@ pub const Repository = struct {
                 "FROM events ORDER BY {s} {s}, id {s} LIMIT ? OFFSET ?;",
             .{ sort_column, sort_direction, sort_direction },
         );
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindInt64(1, params.page_size);
@@ -81,8 +81,8 @@ pub const Repository = struct {
     }
 };
 
-fn countEvents(conn: *storage.c.sqlite3) !usize {
-    const stmt = try storage.Statement.prepare(conn, "SELECT COUNT(*) FROM events;");
+fn countEvents(db: Database) !usize {
+    const stmt = try db.prepare("SELECT COUNT(*) FROM events;");
     defer stmt.deinit();
 
     try stmt.expectRow();

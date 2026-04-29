@@ -85,19 +85,19 @@ fn isManagedLogFile(name: []const u8) bool {
 }
 
 fn cleanupMetricTable(db: app_mod.Database, table_name: []const u8, now_ms: i64, retention_ms: i64) !i64 {
-    db.mutex.lock();
-    defer db.mutex.unlock();
+    db.lock();
+    defer db.unlock();
 
     const cutoff_seconds = @divTrunc(now_ms - retention_ms, 1000);
     const sql = try std.fmt.allocPrint(db.allocator, "DELETE FROM {s} WHERE unixepoch(created_at) < ?;", .{table_name});
     defer db.allocator.free(sql);
 
-    const stmt = try storage.Statement.prepare(db.conn, sql);
+    const stmt = try db.prepare(sql);
     defer stmt.deinit();
 
     stmt.bindInt64(1, cutoff_seconds);
     try stmt.expectDone();
-    return storage.changes(db.conn);
+    return db.changes();
 }
 
 const TestApp = struct {

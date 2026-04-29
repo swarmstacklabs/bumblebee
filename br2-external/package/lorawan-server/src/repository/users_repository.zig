@@ -47,10 +47,10 @@ pub const Repository = struct {
     }
 
     pub fn list(self: Repository, allocator: std.mem.Allocator, params: ListParams) !Page {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
-        const total_entries = try countUsers(self.db.conn);
+        const total_entries = try countUsers(self.db);
         const sort_column = try sqlSortColumn(params.sort_by);
         const sort_direction = sqlSortDirection(params.sort_order);
 
@@ -61,7 +61,7 @@ pub const Repository = struct {
                 "FROM users ORDER BY {s} {s}, id {s} LIMIT ? OFFSET ?;",
             .{ sort_column, sort_direction, sort_direction },
         );
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindInt64(1, params.page_size);
@@ -87,11 +87,11 @@ pub const Repository = struct {
     }
 
     pub fn get(self: Repository, allocator: std.mem.Allocator, name: []const u8) !?Record {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql = "SELECT id, name, scope_json, created_at, updated_at FROM users WHERE name = ?;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, name);
@@ -113,8 +113,8 @@ pub fn scopesPage(params: ListParams) ScopePage {
     return ScopePage.init(@constCast(all_scopes[start..end]), params, all_scopes.len);
 }
 
-fn countUsers(conn: *storage.c.sqlite3) !usize {
-    const stmt = try storage.Statement.prepare(conn, "SELECT COUNT(*) FROM users;");
+fn countUsers(db: Database) !usize {
+    const stmt = try db.prepare("SELECT COUNT(*) FROM users;");
     defer stmt.deinit();
 
     try stmt.expectRow();

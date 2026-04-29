@@ -26,14 +26,6 @@ export default defineConfig({
       '/admin/timeline': {
         target: apiOrigin,
         changeOrigin: true
-      },
-      '/admin/vis.min.js': {
-        target: apiOrigin,
-        changeOrigin: true
-      },
-      '/admin/assets': {
-        target: apiOrigin,
-        changeOrigin: true
       }
     }
   },

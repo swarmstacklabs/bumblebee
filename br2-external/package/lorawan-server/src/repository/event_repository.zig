@@ -16,12 +16,12 @@ pub const Repository = struct {
         defer self.db.allocator.free(payload_json);
 
         const gateway_hex = packets.gatewayMacHex(gateway_mac);
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql =
             "INSERT INTO events(event_type, entity_type, entity_id, payload_json) VALUES(?, 'gateway', ?, ?);";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, event_type);
@@ -32,11 +32,11 @@ pub const Repository = struct {
     }
 
     pub fn countByType(self: Repository, event_type: []const u8) !i64 {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql = "SELECT COUNT(*) FROM events WHERE event_type = ?;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, event_type);

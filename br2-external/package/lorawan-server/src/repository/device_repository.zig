@@ -21,10 +21,10 @@ pub const Repository = struct {
     pub fn deinit(_: Repository) void {}
 
     pub fn list(self: Repository, allocator: std.mem.Allocator, params: ListParams) !CRUDRepository.Page {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
-        const total_entries = try countDevices(self.db.conn);
+        const total_entries = try countDevices(self.db);
         const sort_column = try sqlSortColumn(params.sort_by);
         const sort_direction = sqlSortDirection(params.sort_order);
 
@@ -35,7 +35,7 @@ pub const Repository = struct {
                 "FROM devices ORDER BY {s} {s}, id {s} LIMIT ? OFFSET ?;",
             .{ sort_column, sort_direction, sort_direction },
         );
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindInt64(1, params.page_size);
@@ -55,11 +55,11 @@ pub const Repository = struct {
     }
 
     pub fn get(self: Repository, allocator: std.mem.Allocator, id: i64) !?DeviceRecord {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql = "SELECT id, name, dev_eui, app_eui, app_key, created_at, updated_at FROM devices WHERE id = ?;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindInt64(1, id);
@@ -69,11 +69,11 @@ pub const Repository = struct {
     }
 
     pub fn create(self: Repository, write_input: DeviceWriteInput) !void {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql = "INSERT INTO devices(name, dev_eui, app_eui, app_key) VALUES(?, ?, ?, ?);";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, write_input.name);
@@ -85,14 +85,14 @@ pub const Repository = struct {
     }
 
     pub fn update(self: Repository, id: i64, write_input: DeviceWriteInput) !bool {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql =
             "UPDATE devices " ++
             "SET name = ?, dev_eui = ?, app_eui = ?, app_key = ?, updated_at = CURRENT_TIMESTAMP " ++
             "WHERE id = ?;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, write_input.name);
@@ -102,20 +102,20 @@ pub const Repository = struct {
         stmt.bindInt64(5, id);
 
         stmt.expectDone() catch return error.DeviceUpdateFailed;
-        return storage.changes(self.db.conn) != 0;
+        return self.db.changes() != 0;
     }
 
     pub fn delete(self: Repository, id: i64) !bool {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql = "DELETE FROM devices WHERE id = ?;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindInt64(1, id);
         stmt.expectDone() catch return error.DeviceDeleteFailed;
-        return storage.changes(self.db.conn) != 0;
+        return self.db.changes() != 0;
     }
 };
 
@@ -123,8 +123,8 @@ pub fn crud(db: Database) CRUDRepository {
     return CRUDRepository.bind(Repository, db);
 }
 
-fn countDevices(conn: *storage.c.sqlite3) !usize {
-    const stmt = try storage.Statement.prepare(conn, "SELECT COUNT(*) FROM devices;");
+fn countDevices(db: Database) !usize {
+    const stmt = try db.prepare("SELECT COUNT(*) FROM devices;");
     defer stmt.deinit();
 
     try stmt.expectRow();

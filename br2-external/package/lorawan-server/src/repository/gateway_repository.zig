@@ -74,8 +74,8 @@ pub const Repository = struct {
         const gateway_hex = packets.gatewayMacHex(gateway_mac);
         const now_ms = std.time.milliTimestamp();
 
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql =
             "INSERT INTO gateway_runtime(gateway_mac, semtech_version, last_seen_at, last_seen_unix_ms, peer_address, peer_port, pending_downlink_token, pending_downlink_json, updated_at) " ++
@@ -90,7 +90,7 @@ pub const Repository = struct {
             "pending_downlink_json = COALESCE(excluded.pending_downlink_json, gateway_runtime.pending_downlink_json), " ++
             "updated_at = CURRENT_TIMESTAMP;";
 
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, gateway_hex[0..]);
@@ -104,14 +104,14 @@ pub const Repository = struct {
     }
 
     pub fn rememberPending(self: Repository, gateway_mac: [8]u8, token: u16, txpk_json: []const u8) !void {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql =
             "UPDATE gateway_runtime " ++
             "SET pending_downlink_token = ?, pending_downlink_json = ?, updated_at = CURRENT_TIMESTAMP " ++
             "WHERE gateway_mac = ?;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindInt(1, token);
@@ -122,14 +122,14 @@ pub const Repository = struct {
     }
 
     pub fn clearPending(self: Repository, gateway_mac: [8]u8, token: u16) !void {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql =
             "UPDATE gateway_runtime " ++
             "SET pending_downlink_token = NULL, pending_downlink_json = NULL, updated_at = CURRENT_TIMESTAMP " ++
             "WHERE gateway_mac = ? AND pending_downlink_token = ?;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         const gateway_hex = packets.gatewayMacHex(gateway_mac);
@@ -141,13 +141,13 @@ pub const Repository = struct {
     pub fn readTarget(self: Repository, gateway_mac: [8]u8) !GatewayTarget {
         const gateway_hex = packets.gatewayMacHex(gateway_mac);
 
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql =
             "SELECT peer_address, peer_port, semtech_version, pending_downlink_token, pending_downlink_json " ++
             "FROM gateway_runtime WHERE gateway_mac = ?;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, gateway_hex[0..]);
@@ -176,14 +176,14 @@ pub const Repository = struct {
     pub fn get(self: Repository, gateway_mac: [8]u8) !?RuntimeRecord {
         const gateway_hex = packets.gatewayMacHex(gateway_mac);
 
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql =
             "SELECT semtech_version, last_seen_at, last_seen_unix_ms, peer_address, peer_port, " ++
             "pending_downlink_token, pending_downlink_json, updated_at " ++
             "FROM gateway_runtime WHERE gateway_mac = ?;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, gateway_hex[0..]);
@@ -203,14 +203,14 @@ pub const Repository = struct {
     }
 
     pub fn list(self: Repository, allocator: std.mem.Allocator) ![]RuntimeRecord {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql =
             "SELECT gateway_mac, semtech_version, last_seen_at, last_seen_unix_ms, peer_address, peer_port, " ++
             "pending_downlink_token, pending_downlink_json, updated_at " ++
             "FROM gateway_runtime ORDER BY gateway_mac ASC;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         var out = std.ArrayList(RuntimeRecord){};
@@ -238,12 +238,12 @@ pub const Repository = struct {
     }
 
     pub fn countPending(self: Repository, gateway_mac: [8]u8) !i64 {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const gateway_hex = packets.gatewayMacHex(gateway_mac);
         const sql = "SELECT COUNT(*) FROM gateway_runtime WHERE gateway_mac = ? AND pending_downlink_token IS NOT NULL;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, gateway_hex[0..]);

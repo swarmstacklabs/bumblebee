@@ -21,12 +21,12 @@ pub const Repository = struct {
         level: []const u8,
         latency_ns: u64,
     ) !void {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql =
             "INSERT INTO http_request_metrics(method, path, status_code, level, latency_ns) VALUES(?, ?, ?, ?, ?);";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, method);
@@ -38,11 +38,11 @@ pub const Repository = struct {
     }
 
     pub fn count(self: Repository) !i64 {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql = "SELECT COUNT(*) FROM http_request_metrics;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         try stmt.expectRow();
@@ -50,11 +50,11 @@ pub const Repository = struct {
     }
 
     pub fn countByStatus(self: Repository, status_code: u16) !i64 {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql = "SELECT COUNT(*) FROM http_request_metrics WHERE status_code = ?;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindInt(1, status_code);

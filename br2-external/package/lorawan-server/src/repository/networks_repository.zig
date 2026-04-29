@@ -44,10 +44,10 @@ pub const Repository = struct {
     pub fn deinit(_: Repository) void {}
 
     pub fn list(self: Repository, allocator: std.mem.Allocator, params: ListParams) !CRUDRepository.Page {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
-        const total_entries = try countNetworks(self.db.conn);
+        const total_entries = try countNetworks(self.db);
         const sort_column = try sqlSortColumn(params.sort_by);
         const sort_direction = sqlSortDirection(params.sort_order);
 
@@ -58,7 +58,7 @@ pub const Repository = struct {
                 "FROM networks ORDER BY {s} {s}, id {s} LIMIT ? OFFSET ?;",
             .{ sort_column, sort_direction, sort_direction },
         );
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindInt64(1, params.page_size);
@@ -84,11 +84,11 @@ pub const Repository = struct {
     }
 
     pub fn get(self: Repository, allocator: std.mem.Allocator, name: []const u8) !?Record {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql = "SELECT id, name, network_json, created_at, updated_at FROM networks WHERE name = ?;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, name);
@@ -103,11 +103,11 @@ pub const Repository = struct {
     }
 
     pub fn create(self: Repository, write_input: WriteInput) !void {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql = "INSERT INTO networks(name, network_json, updated_at) VALUES(?, ?, CURRENT_TIMESTAMP);";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, write_input.name);
@@ -116,33 +116,33 @@ pub const Repository = struct {
     }
 
     pub fn update(self: Repository, name: []const u8, write_input: WriteInput) !bool {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql =
             "UPDATE networks SET name = ?, network_json = ?, updated_at = CURRENT_TIMESTAMP " ++
             "WHERE name = ?;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, write_input.name);
         stmt.bindText(2, write_input.network_json);
         stmt.bindText(3, name);
         stmt.expectDone() catch return error.NetworkUpdateFailed;
-        return storage.changes(self.db.conn) != 0;
+        return self.db.changes() != 0;
     }
 
     pub fn delete(self: Repository, name: []const u8) !bool {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql = "DELETE FROM networks WHERE name = ?;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, name);
         stmt.expectDone() catch return error.NetworkDeleteFailed;
-        return storage.changes(self.db.conn) != 0;
+        return self.db.changes() != 0;
     }
 };
 
@@ -150,8 +150,8 @@ pub fn crud(db: Database) CRUDRepository {
     return CRUDRepository.bind(Repository, db);
 }
 
-fn countNetworks(conn: *storage.c.sqlite3) !usize {
-    const stmt = try storage.Statement.prepare(conn, "SELECT COUNT(*) FROM networks;");
+fn countNetworks(db: Database) !usize {
+    const stmt = try db.prepare("SELECT COUNT(*) FROM networks;");
     defer stmt.deinit();
 
     try stmt.expectRow();

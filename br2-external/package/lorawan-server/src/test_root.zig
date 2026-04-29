@@ -1,5 +1,7 @@
 test {
     _ = @import("conventions.zig");
+    _ = @import("db/memory.zig");
+    _ = @import("db/sqlite.zig");
     _ = @import("http/handlers/crud_handler.zig");
     _ = @import("http/handlers/read_only_handler.zig");
     _ = @import("http/response.zig");

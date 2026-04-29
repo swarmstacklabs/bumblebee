@@ -1884,13 +1884,13 @@ fn seedGatewayNetwork(db: app_mod.Database, gateway_mac: [8]u8) !void {
 
 fn seedGatewayNetworkWithJson(db: app_mod.Database, gateway_mac: [8]u8, network_json: []const u8) !void {
     const gateway_hex = packets.gatewayMacHex(gateway_mac);
-    const network_stmt = try storage.Statement.prepare(db.conn, "INSERT INTO networks(name, network_json) VALUES(?, ?);");
+    const network_stmt = try db.prepare("INSERT INTO networks(name, network_json) VALUES(?, ?);");
     defer network_stmt.deinit();
     network_stmt.bindText(1, "public");
     network_stmt.bindText(2, network_json);
     try network_stmt.expectDone();
 
-    const gateway_stmt = try storage.Statement.prepare(db.conn, "INSERT INTO gateways(mac, name, network_name, gateway_json) VALUES(?, ?, ?, ?);");
+    const gateway_stmt = try db.prepare("INSERT INTO gateways(mac, name, network_name, gateway_json) VALUES(?, ?, ?, ?);");
     defer gateway_stmt.deinit();
     gateway_stmt.bindText(1, gateway_hex[0..]);
     gateway_stmt.bindText(2, "gateway-a");
@@ -1900,7 +1900,7 @@ fn seedGatewayNetworkWithJson(db: app_mod.Database, gateway_mac: [8]u8, network_
 }
 
 fn seedDevice(db: app_mod.Database, name: []const u8, dev_eui: []const u8, app_eui: []const u8, app_key: []const u8, network_name: []const u8, dev_addr: []const u8) !void {
-    const stmt = try storage.Statement.prepare(db.conn, "INSERT INTO devices(name, dev_eui, app_eui, app_key, device_json) VALUES(?, ?, ?, ?, ?);");
+    const stmt = try db.prepare("INSERT INTO devices(name, dev_eui, app_eui, app_key, device_json) VALUES(?, ?, ?, ?, ?);");
     defer stmt.deinit();
     const device_json = try std.fmt.allocPrint(db.allocator, "{{\"network_name\":\"{s}\",\"dev_addr\":\"{s}\"}}", .{ network_name, dev_addr });
     defer db.allocator.free(device_json);

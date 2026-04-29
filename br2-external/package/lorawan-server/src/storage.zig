@@ -75,6 +75,48 @@ pub fn changes(db: *c.sqlite3) c_int {
     return c.sqlite3_changes(db);
 }
 
+pub const Db = struct {
+    vtable: *const VTable,
+
+    pub const VTable = struct {
+        lock: *const fn (*Db) void,
+        unlock: *const fn (*Db) void,
+        exec: *const fn (*Db, []const u8) anyerror!void,
+        prepare: *const fn (*Db, []const u8) anyerror!Statement,
+        changes: *const fn (*Db) c_int,
+        runMigrations: *const fn (*Db) anyerror!void,
+        destroy: *const fn (*Db) void,
+    };
+
+    pub fn lock(self: *Db) void {
+        self.vtable.lock(self);
+    }
+
+    pub fn unlock(self: *Db) void {
+        self.vtable.unlock(self);
+    }
+
+    pub fn exec(self: *Db, sql: []const u8) !void {
+        return self.vtable.exec(self, sql);
+    }
+
+    pub fn prepare(self: *Db, sql: []const u8) !Statement {
+        return self.vtable.prepare(self, sql);
+    }
+
+    pub fn changes(self: *Db) c_int {
+        return self.vtable.changes(self);
+    }
+
+    pub fn runMigrations(self: *Db) !void {
+        return self.vtable.runMigrations(self);
+    }
+
+    pub fn destroy(self: *Db) void {
+        self.vtable.destroy(self);
+    }
+};
+
 pub const StatusResponse = struct {
     status: []const u8,
 
@@ -211,27 +253,51 @@ pub const DeviceWriteInput = struct {
 
 pub const Database = struct {
     allocator: std.mem.Allocator,
-    conn: *c.sqlite3,
-    mutex: *std.Thread.Mutex,
+    db: *Db,
 
-    pub fn init(allocator: std.mem.Allocator, conn: *c.sqlite3, mutex: *std.Thread.Mutex) Database {
+    pub fn init(allocator: std.mem.Allocator, db: *Db) Database {
         return .{
             .allocator = allocator,
-            .conn = conn,
-            .mutex = mutex,
+            .db = db,
         };
     }
 
     pub fn deinit(_: Database) void {}
+
+    pub fn lock(self: Database) void {
+        self.db.lock();
+    }
+
+    pub fn unlock(self: Database) void {
+        self.db.unlock();
+    }
+
+    pub fn prepare(self: Database, sql: []const u8) !Statement {
+        return self.db.prepare(sql);
+    }
+
+    pub fn changes(self: Database) c_int {
+        return self.db.changes();
+    }
 };
 
-pub const App = struct {
+pub const SQLiteDb = struct {
     allocator: std.mem.Allocator,
-    db: *c.sqlite3,
-    pending_downlinks: pending_downlinks.Tracker,
+    conn: *c.sqlite3,
     mutex: std.Thread.Mutex = .{},
+    interface: Db,
 
-    pub fn init(allocator: std.mem.Allocator, path: []const u8) !App {
+    const vtable = Db.VTable{
+        .lock = lock,
+        .unlock = unlock,
+        .exec = exec,
+        .prepare = prepare,
+        .changes = sqliteChanges,
+        .runMigrations = runMigrations,
+        .destroy = destroy,
+    };
+
+    pub fn create(allocator: std.mem.Allocator, path: []const u8) !*Db {
         try ensureDbDir(path);
 
         const path_z = try allocator.dupeZ(u8, path);
@@ -242,14 +308,103 @@ pub const App = struct {
             return error.SqliteOpenFailed;
         }
 
+        const self = try allocator.create(SQLiteDb);
+        errdefer allocator.destroy(self);
+
+        self.* = .{
+            .allocator = allocator,
+            .conn = db_ptr.?,
+            .interface = .{
+                .vtable = &vtable,
+            },
+        };
+        errdefer _ = c.sqlite3_close(self.conn);
+
+        return &self.interface;
+    }
+
+    fn fromDb(db: *Db) *SQLiteDb {
+        return @fieldParentPtr("interface", db);
+    }
+
+    fn lock(db: *Db) void {
+        fromDb(db).mutex.lock();
+    }
+
+    fn unlock(db: *Db) void {
+        fromDb(db).mutex.unlock();
+    }
+
+    fn exec(db: *Db, sql: []const u8) !void {
+        const self = fromDb(db);
+        self.mutex.lock();
+        defer self.mutex.unlock();
+        try self.execUnlocked(sql);
+    }
+
+    fn prepare(db: *Db, sql: []const u8) !Statement {
+        return Statement.prepare(fromDb(db).conn, sql);
+    }
+
+    fn sqliteChanges(db: *Db) c_int {
+        return changes(fromDb(db).conn);
+    }
+
+    fn runMigrations(db: *Db) !void {
+        const self = fromDb(db);
+        self.mutex.lock();
+        defer self.mutex.unlock();
+
+        try self.execUnlocked(schema_migrations_sql);
+        const current_version = try getSchemaVersion(self.conn);
+
+        for (migrations) |migration| {
+            if (migration.version <= current_version) continue;
+            try applyMigration(self.conn, migration);
+            logger.info("storage", "migration_applied", "sqlite migration applied", .{
+                .version = migration.version,
+                .name = migration.name,
+            });
+        }
+    }
+
+    fn destroy(db: *Db) void {
+        const self = fromDb(db);
+        _ = c.sqlite3_close(self.conn);
+        self.allocator.destroy(self);
+    }
+
+    fn execUnlocked(self: *SQLiteDb, sql: []const u8) !void {
+        const sql_z = try self.allocator.dupeZ(u8, sql);
+        defer self.allocator.free(sql_z);
+
+        var err_msg: [*c]u8 = null;
+        if (c.sqlite3_exec(self.conn, sql_z.ptr, null, null, &err_msg) != c.SQLITE_OK) {
+            if (err_msg != null) {
+                logger.err("storage", "sqlite_exec_failed", "sqlite exec failed", .{
+                    .error_message = std.mem.span(@as([*:0]const u8, err_msg)),
+                });
+                c.sqlite3_free(err_msg);
+            }
+            return error.SqliteExecFailed;
+        }
+    }
+};
+
+pub const App = struct {
+    allocator: std.mem.Allocator,
+    db: *Db,
+    pending_downlinks: pending_downlinks.Tracker,
+
+    pub fn init(allocator: std.mem.Allocator, path: []const u8) !App {
         var self = App{
             .allocator = allocator,
-            .db = db_ptr.?,
+            .db = try SQLiteDb.create(allocator, path),
             .pending_downlinks = pending_downlinks.Tracker.init(allocator),
         };
         errdefer {
             self.pending_downlinks.deinit();
-            _ = c.sqlite3_close(self.db);
+            self.db.destroy();
         }
 
         try self.exec("PRAGMA foreign_keys = ON;");
@@ -259,50 +414,19 @@ pub const App = struct {
 
     pub fn deinit(self: *App) void {
         self.pending_downlinks.deinit();
-        _ = c.sqlite3_close(self.db);
+        self.db.destroy();
     }
 
     pub fn database(self: *App) Database {
-        return Database.init(self.allocator, self.db, &self.mutex);
+        return Database.init(self.allocator, self.db);
     }
 
     pub fn exec(self: *App, sql: []const u8) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-        try execUnlocked(self, sql);
+        try self.db.exec(sql);
     }
 
     pub fn runMigrations(self: *App) !void {
-        self.mutex.lock();
-        defer self.mutex.unlock();
-
-        try execUnlocked(self, schema_migrations_sql);
-        const current_version = try getSchemaVersion(self.db);
-
-        for (migrations) |migration| {
-            if (migration.version <= current_version) continue;
-            try applyMigration(self.db, migration);
-            logger.info("storage", "migration_applied", "sqlite migration applied", .{
-                .version = migration.version,
-                .name = migration.name,
-            });
-        }
-    }
-
-    fn execUnlocked(self: *App, sql: []const u8) !void {
-        const sql_z = try self.allocator.dupeZ(u8, sql);
-        defer self.allocator.free(sql_z);
-
-        var err_msg: [*c]u8 = null;
-        if (c.sqlite3_exec(self.db, sql_z.ptr, null, null, &err_msg) != c.SQLITE_OK) {
-            if (err_msg != null) {
-                logger.err("storage", "sqlite_exec_failed", "sqlite exec failed", .{
-                    .error_message = std.mem.span(@as([*:0]const u8, err_msg)),
-                });
-                c.sqlite3_free(err_msg);
-            }
-            return error.SqliteExecFailed;
-        }
+        try self.db.runMigrations();
     }
 };
 

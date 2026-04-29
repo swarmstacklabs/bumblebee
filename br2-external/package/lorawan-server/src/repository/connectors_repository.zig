@@ -80,10 +80,10 @@ pub const Repository = struct {
     }
 
     pub fn list(self: Repository, allocator: std.mem.Allocator, params: ListParams) !CRUDRepository.Page {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
-        const total_entries = try countConnectors(self.db.conn);
+        const total_entries = try countConnectors(self.db);
         const sort_column = try sqlSortColumn(params.sort_by);
         const sort_direction = sqlSortDirection(params.sort_order);
 
@@ -94,7 +94,7 @@ pub const Repository = struct {
                 "FROM connectors ORDER BY {s} {s}, id {s} LIMIT ? OFFSET ?;",
             .{ sort_column, sort_direction, sort_direction },
         );
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindInt64(1, params.page_size);
@@ -114,13 +114,13 @@ pub const Repository = struct {
     }
 
     pub fn get(self: Repository, allocator: std.mem.Allocator, id: i64) !?Record {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql =
             "SELECT id, name, connector_type, uri, enabled, topic, exchange_name, routing_key, partition, client_id, username, password " ++
             "FROM connectors WHERE id = ?;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindInt64(1, id);
@@ -129,13 +129,13 @@ pub const Repository = struct {
     }
 
     pub fn create(self: Repository, write_input: WriteInput) !void {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql =
             "INSERT INTO connectors(name, connector_type, uri, enabled, topic, exchange_name, routing_key, partition, client_id, username, password, updated_at) " ++
             "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP);";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         bindWriteInput(stmt, write_input);
@@ -143,39 +143,39 @@ pub const Repository = struct {
     }
 
     pub fn update(self: Repository, id: i64, write_input: WriteInput) !bool {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql =
             "UPDATE connectors SET " ++
             "name = ?, connector_type = ?, uri = ?, enabled = ?, topic = ?, exchange_name = ?, routing_key = ?, partition = ?, client_id = ?, username = ?, password = ?, updated_at = CURRENT_TIMESTAMP " ++
             "WHERE id = ?;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         bindWriteInput(stmt, write_input);
         stmt.bindInt64(12, id);
 
         stmt.expectDone() catch return error.ConnectorUpdateFailed;
-        return storage.changes(self.db.conn) != 0;
+        return self.db.changes() != 0;
     }
 
     pub fn delete(self: Repository, id: i64) !bool {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql = "DELETE FROM connectors WHERE id = ?;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindInt64(1, id);
         stmt.expectDone() catch return error.ConnectorDeleteFailed;
-        return storage.changes(self.db.conn) != 0;
+        return self.db.changes() != 0;
     }
 
     pub fn upsert(self: Repository, input: WriteInput) !void {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql =
             "INSERT INTO connectors(name, connector_type, uri, enabled, topic, exchange_name, routing_key, partition, client_id, username, password, updated_at) " ++
@@ -192,7 +192,7 @@ pub const Repository = struct {
             "username = excluded.username, " ++
             "password = excluded.password, " ++
             "updated_at = CURRENT_TIMESTAMP;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         bindWriteInput(stmt, input);
@@ -200,11 +200,11 @@ pub const Repository = struct {
     }
 
     pub fn setEnabled(self: Repository, name: []const u8, enabled: bool) !void {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql = "UPDATE connectors SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindInt(1, if (enabled) 1 else 0);
@@ -213,13 +213,13 @@ pub const Repository = struct {
     }
 
     fn listWithEnabledFilter(self: Repository, allocator: std.mem.Allocator, enabled_only: bool) ![]Record {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql =
             "SELECT id, name, connector_type, uri, enabled, topic, exchange_name, routing_key, partition, client_id, username, password " ++
             "FROM connectors WHERE (? = 0 OR enabled = 1) ORDER BY id ASC;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
         stmt.bindInt(1, @as(c_int, if (enabled_only) 1 else 0));
 
@@ -272,8 +272,8 @@ fn bindWriteInput(stmt: storage.Statement, input: WriteInput) void {
     bindOptionalText(stmt, 11, input.password);
 }
 
-fn countConnectors(conn: *storage.c.sqlite3) !usize {
-    const stmt = try storage.Statement.prepare(conn, "SELECT COUNT(*) FROM connectors;");
+fn countConnectors(db: Database) !usize {
+    const stmt = try db.prepare("SELECT COUNT(*) FROM connectors;");
     defer stmt.deinit();
 
     try stmt.expectRow();

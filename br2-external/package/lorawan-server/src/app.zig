@@ -1,4 +1,5 @@
 const config = @import("config.zig");
+const db_mod = @import("db.zig");
 const storage = @import("storage.zig");
 
 pub const default_udp_port = config.default_udp_port;
@@ -25,5 +26,6 @@ pub const CpuUsage = storage.CpuUsage;
 pub const SystemResourcesRecord = storage.SystemResourcesRecord;
 pub const DeviceRecord = storage.DeviceRecord;
 pub const DeviceWriteInput = storage.DeviceWriteInput;
-pub const Database = storage.Database;
+pub const Db = db_mod.Db;
+pub const Database = db_mod.Database;
 pub const App = storage.App;

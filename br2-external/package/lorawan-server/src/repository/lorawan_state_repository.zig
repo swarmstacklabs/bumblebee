@@ -16,11 +16,11 @@ pub const Repository = struct {
     pub fn deinit(_: Repository) void {}
 
     pub fn loadGateway(self: Repository, allocator: std.mem.Allocator, gateway_mac_hex: []const u8) !?types.Gateway {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql = "SELECT mac, network_name, gateway_json FROM gateways WHERE lower(mac) = lower(?);";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
         stmt.bindText(1, gateway_mac_hex);
         if (stmt.step() != storage.c.SQLITE_ROW) return null;
@@ -38,11 +38,11 @@ pub const Repository = struct {
     }
 
     pub fn loadNetworkByName(self: Repository, allocator: std.mem.Allocator, name: []const u8) !?types.Network {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql = "SELECT name, network_json FROM networks WHERE name = ?;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
         stmt.bindText(1, name);
         if (stmt.step() != storage.c.SQLITE_ROW) return null;
@@ -70,11 +70,11 @@ pub const Repository = struct {
         const dev_eui_hex = try hexString(allocator, &dev_eui);
         defer allocator.free(dev_eui_hex);
 
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql = "SELECT id, name, dev_eui, app_eui, app_key, device_json FROM devices WHERE lower(dev_eui) = lower(?);";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
         stmt.bindText(1, dev_eui_hex);
         if (stmt.step() != storage.c.SQLITE_ROW) return null;
@@ -101,13 +101,13 @@ pub const Repository = struct {
         const device_json = try encodeDeviceJson(allocator, device);
         defer allocator.free(device_json);
 
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql =
             "UPDATE devices SET name = ?, device_json = ?, updated_at = CURRENT_TIMESTAMP " ++
             "WHERE id = ?;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
         stmt.bindText(1, device.name);
         stmt.bindText(2, device_json);
@@ -119,11 +119,11 @@ pub const Repository = struct {
         const dev_addr_hex = try hexString(allocator, &dev_addr);
         defer allocator.free(dev_addr_hex);
 
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql = "SELECT id, device_id, node_json FROM nodes WHERE lower(dev_addr) = lower(?);";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
         stmt.bindText(1, dev_addr_hex);
         if (stmt.step() != storage.c.SQLITE_ROW) return null;
@@ -177,13 +177,13 @@ pub const Repository = struct {
         defer allocator.free(dev_addr_hex);
         const device_id = node.device_id;
 
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql =
             "INSERT INTO nodes(dev_addr, device_id, node_json) VALUES(?, ?, ?) " ++
             "ON CONFLICT(dev_addr) DO UPDATE SET device_id = excluded.device_id, node_json = excluded.node_json, updated_at = CURRENT_TIMESTAMP;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
         stmt.bindText(1, dev_addr_hex);
         if (device_id) |value| stmt.bindInt64(2, value) else stmt.bindNull(2);

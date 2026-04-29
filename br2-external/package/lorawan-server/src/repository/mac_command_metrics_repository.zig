@@ -14,12 +14,12 @@ pub const Repository = struct {
     pub fn deinit(_: Repository) void {}
 
     pub fn insertObservation(self: Repository, command_tag: []const u8, outcome: []const u8, level: []const u8, latency_ns: u64) !void {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql =
             "INSERT INTO mac_command_metrics(command_tag, outcome, level, latency_ns) VALUES(?, ?, ?, ?);";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         stmt.bindText(1, command_tag);
@@ -30,11 +30,11 @@ pub const Repository = struct {
     }
 
     pub fn count(self: Repository) !i64 {
-        self.db.mutex.lock();
-        defer self.db.mutex.unlock();
+        self.db.lock();
+        defer self.db.unlock();
 
         const sql = "SELECT COUNT(*) FROM mac_command_metrics;";
-        const stmt = try storage.Statement.prepare(self.db.conn, sql);
+        const stmt = try self.db.prepare(sql);
         defer stmt.deinit();
 
         try stmt.expectRow();

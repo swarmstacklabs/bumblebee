@@ -143,7 +143,7 @@ test "CRUDRepository forwards operations to implementation" {
         db: Database,
 
         var init_count: usize = 0;
-        var last_mutex: ?*std.Thread.Mutex = null;
+        var last_db: ?*app_mod.Db = null;
         var last_get_id: ?i64 = null;
         var last_create_name: ?[]const u8 = null;
         var last_update_id: ?i64 = null;
@@ -152,7 +152,7 @@ test "CRUDRepository forwards operations to implementation" {
 
         pub fn init(db: Database) @This() {
             init_count += 1;
-            last_mutex = db.mutex;
+            last_db = db.db;
             return .{ .db = db };
         }
 
@@ -197,15 +197,14 @@ test "CRUDRepository forwards operations to implementation" {
     };
 
     FakeRepository.init_count = 0;
-    FakeRepository.last_mutex = null;
+    FakeRepository.last_db = null;
     FakeRepository.last_get_id = null;
     FakeRepository.last_create_name = null;
     FakeRepository.last_update_id = null;
     FakeRepository.last_update_name = null;
     FakeRepository.last_delete_id = null;
 
-    var mutex = std.Thread.Mutex{};
-    const db = Database.init(testing.allocator, undefined, &mutex);
+    const db = Database.init(testing.allocator, undefined);
 
     const CrudRepository = Interface(Record, WriteInput, i64);
     const repo = CrudRepository.bind(FakeRepository, db);
@@ -240,7 +239,7 @@ test "CRUDRepository forwards operations to implementation" {
     try testing.expect(!deleted);
 
     try testing.expectEqual(@as(usize, 5), FakeRepository.init_count);
-    try testing.expect(FakeRepository.last_mutex == &mutex);
+    try testing.expect(FakeRepository.last_db == db.db);
     try testing.expectEqual(@as(?i64, 42), FakeRepository.last_get_id);
     try testing.expectEqualStrings("created", FakeRepository.last_create_name.?);
     try testing.expectEqual(@as(?i64, 7), FakeRepository.last_update_id);
@@ -295,8 +294,7 @@ test "CRUDRepository propagates implementation errors" {
         }
     };
 
-    var mutex = std.Thread.Mutex{};
-    const db = Database.init(testing.allocator, undefined, &mutex);
+    const db = Database.init(testing.allocator, undefined);
 
     const CrudRepository = Interface(Record, WriteInput, i64);
     const repo = CrudRepository.bind(FakeRepository, db);
