@@ -124,7 +124,7 @@ import {
   resolveFieldLabelKey,
   resolveFormSections
 } from '../../models/entity-definitions';
-import { createRecord, readRecord, updateRecord } from '../../services/admin-api';
+import { createRecord, listRecords, readRecord, updateRecord } from '../../services/admin-api';
 import { useScopesStore } from '../../stores/scopes';
 import { resolveEntityStore } from '../../stores/entity-store-registry';
 import { t } from '../../i18n';
@@ -168,6 +168,7 @@ const success = ref('');
 const fieldKinds = ref({});
 const primitiveValues = ref({});
 const jsonValues = ref({});
+const metadata = ref({});
 
 const newFieldName = ref('');
 const newFieldValue = ref('');
@@ -179,12 +180,25 @@ const mergedDefinition = computed(() => ({
 }));
 const usersScopeOptions = computed(() => (props.entity === 'users' ? scopesStore.scopes : []));
 const fieldOptions = computed(() => {
-  if (props.entity !== 'users') {
-    return {};
+  if (props.entity === 'users') {
+    const scopes =
+      metadata.value?.scopes?.map((scope) => scope?.scope || scope).filter(Boolean) ||
+      usersScopeOptions.value;
+    return { scopes };
   }
-  return {
-    scopes: usersScopeOptions.value
-  };
+  if (props.entity === 'devices') {
+    return {
+      network_name: (metadata.value?.networks || []).map((network) => network.name).filter(Boolean),
+      tx_rf_channels: (metadata.value?.tx_rf_channels || []).map((channel) => String(channel))
+    };
+  }
+  if (props.entity === 'gateways') {
+    return {
+      network_name: (metadata.value?.networks || []).map((network) => network.name).filter(Boolean),
+      tx_rfch: metadata.value?.tx_rf_channels || []
+    };
+  }
+  return {};
 });
 
 const canSubmit = computed(() => {
@@ -266,6 +280,26 @@ const classifyField = (field, value) => {
       : [];
     return;
   }
+  if (props.entity === 'devices' && field === 'network_name') {
+    fieldKinds.value[field] = 'select';
+    primitiveValues.value[field] = value == null ? '' : String(value);
+    return;
+  }
+  if (props.entity === 'devices' && field === 'tx_rf_channels') {
+    fieldKinds.value[field] = 'readonly-array';
+    primitiveValues.value[field] = [];
+    return;
+  }
+  if (props.entity === 'gateways' && field === 'network_name') {
+    fieldKinds.value[field] = 'select';
+    primitiveValues.value[field] = value == null ? '' : String(value);
+    return;
+  }
+  if (props.entity === 'gateways' && field === 'tx_rfch') {
+    fieldKinds.value[field] = 'select';
+    primitiveValues.value[field] = Number(value ?? 0);
+    return;
+  }
   if (Array.isArray(value) || (value && typeof value === 'object')) {
     fieldKinds.value[field] = 'json';
     jsonValues.value[field] = JSON.stringify(value, null, 2);
@@ -330,10 +364,10 @@ const activateSection = (sectionId) => {
 
 const hydrateFromObject = (payload) => {
   resetFormState();
-  const source =
-    props.entity === 'users'
-      ? { ...createDefaultsPayload(), ...(payload || {}) }
-      : payload || {};
+  const source = { ...createDefaultsPayload(), ...(payload || {}) };
+  if (props.entity === 'devices' && !Object.prototype.hasOwnProperty.call(source, 'tx_rf_channels')) {
+    source.tx_rf_channels = metadata.value?.tx_rf_channels || [];
+  }
   Object.entries(source).forEach(([field, value]) => classifyField(field, value));
 };
 
@@ -345,9 +379,59 @@ const createDefaultsPayload = () => {
   return { [mergedDefinition.value.idField]: '' };
 };
 
+const loadDeviceSupportData = async () => {
+  const { data } = await listRecords('networks', {
+    page: 1,
+    page_size: 200,
+    sort_by: 'name',
+    sort_order: 'asc'
+  });
+  metadata.value = {
+    ...metadata.value,
+    networks: (Array.isArray(data) ? data : []).map((network) => ({
+      name: network.name,
+      region: readNetworkRegion(network.network_json)
+    })),
+    tx_rf_channels: [0, 1, 2, 3, 4, 5, 6, 7]
+  };
+};
+
+const loadGatewaySupportData = async () => {
+  const { metadata: responseMetadata } = await listRecords('gateways', {
+    page: 1,
+    page_size: 1,
+    sort_by: 'name',
+    sort_order: 'asc'
+  });
+  metadata.value = {
+    ...metadata.value,
+    ...(responseMetadata || {})
+  };
+};
+
+const readNetworkRegion = (networkJson) => {
+  if (!networkJson) {
+    return 'EU868';
+  }
+  if (typeof networkJson === 'object') {
+    return networkJson.region || 'EU868';
+  }
+  try {
+    return JSON.parse(String(networkJson || '{}')).region || 'EU868';
+  } catch {
+    return 'EU868';
+  }
+};
+
 const ensureEntitySupportData = async () => {
   if (props.entity === 'users') {
     await scopesStore.fetchScopes();
+  }
+  if (props.entity === 'devices') {
+    await loadDeviceSupportData();
+  }
+  if (props.entity === 'gateways') {
+    await loadGatewaySupportData();
   }
 };
 
@@ -371,7 +455,8 @@ const loadRecord = async () => {
       return;
     }
 
-    const { data } = await readRecord(props.entity, props.recordId);
+    const { data, metadata: responseMetadata } = await readRecord(props.entity, props.recordId);
+    metadata.value = { ...metadata.value, ...(responseMetadata || {}) };
     hydrateFromObject(data || {});
     emit('loaded', data);
   } catch (err) {
@@ -467,6 +552,20 @@ const validateUsersRequiredFields = (payload) => {
   return '';
 };
 
+const validateDeviceRequiredFields = (payload) => {
+  if (props.entity !== 'devices') {
+    return '';
+  }
+
+  const requiredFields = ['name', 'dev_eui', 'app_eui', 'app_key'];
+  for (const field of requiredFields) {
+    if (!String(payload[field] || '').trim()) {
+      return `${fieldLabel(field)} is required.`;
+    }
+  }
+  return '';
+};
+
 const buildPayload = () => {
   const payload = {};
   for (const field of Object.keys(fieldKinds.value)) {
@@ -474,6 +573,9 @@ const buildPayload = () => {
       continue;
     }
     const kind = fieldKinds.value[field];
+    if (kind === 'readonly-array') {
+      continue;
+    }
     if (kind === 'string-array') {
       payload[field] = Array.isArray(primitiveValues.value[field])
         ? primitiveValues.value[field].map((item) => String(item)).filter(Boolean)
@@ -504,6 +606,10 @@ const submit = async () => {
     const validationError = validateUsersRequiredFields(payload);
     if (validationError) {
       throw new Error(validationError);
+    }
+    const deviceValidationError = validateDeviceRequiredFields(payload);
+    if (deviceValidationError) {
+      throw new Error(deviceValidationError);
     }
     const entityStore = resolveEntityStore(props.entity);
     if (props.mode === 'create') {

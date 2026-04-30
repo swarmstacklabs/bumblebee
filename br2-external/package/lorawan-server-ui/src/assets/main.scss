@@ -64,18 +64,19 @@ p.channel_check {
   }
 }
 
-.scope-picker .input-group {
+.multi-value-picker .input-group {
   max-width: 480px;
 }
 
-.selected-scope-list {
+.selected-value-list,
+.readonly-value-list {
   margin-top: 8px;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
 }
 
-.selected-scope-chip {
+.selected-value-chip {
   display: inline-flex;
   align-items: center;
 
@@ -84,6 +85,15 @@ p.channel_check {
     line-height: 1;
     margin-right: 4px;
   }
+}
+
+.readonly-value-list {
+  min-height: 34px;
+  align-items: center;
+}
+
+.readonly-value-chip {
+  display: inline-block;
 }
 
 .boolean-field-control {

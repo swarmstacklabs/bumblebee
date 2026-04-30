@@ -33,7 +33,7 @@ pub const Repository = struct {
         var sql_buf: [256]u8 = undefined;
         const sql = try std.fmt.bufPrint(
             &sql_buf,
-            "SELECT id, name, dev_eui, app_eui, app_key, created_at, updated_at " ++
+            "SELECT id, name, dev_eui, app_eui, app_key, network_name, created_at, updated_at " ++
                 "FROM devices ORDER BY {s} {s}, id {s} LIMIT ? OFFSET ?;",
             .{ sort_column, sort_direction, sort_direction },
         );
@@ -60,7 +60,7 @@ pub const Repository = struct {
         self.storage.lock();
         defer self.storage.unlock();
 
-        const sql = "SELECT id, name, dev_eui, app_eui, app_key, created_at, updated_at FROM devices WHERE id = ?;";
+        const sql = "SELECT id, name, dev_eui, app_eui, app_key, network_name,created_at, updated_at FROM devices WHERE id = ?;";
         const stmt = try self.storage.prepare(sql);
         defer stmt.deinit();
 
@@ -159,6 +159,7 @@ fn rowToDevice(allocator: std.mem.Allocator, stmt: Statement) !DeviceRecord {
         try dupColumnText(allocator, stmt, 4),
         try dupColumnText(allocator, stmt, 5),
         try dupColumnText(allocator, stmt, 6),
+        try dupColumnText(allocator, stmt, 7),
     );
 }
 

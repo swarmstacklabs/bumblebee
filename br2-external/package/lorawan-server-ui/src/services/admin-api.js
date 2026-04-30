@@ -45,12 +45,42 @@ const request = async (path, options = {}) => {
   }
 
   const payload = await response.json();
+  if (
+    payload &&
+    typeof payload === 'object' &&
+    Object.prototype.hasOwnProperty.call(payload, 'data') &&
+    Object.prototype.hasOwnProperty.call(payload, 'metadata') &&
+    payload.data &&
+    typeof payload.data === 'object' &&
+    Array.isArray(payload.data.entries)
+  ) {
+    const headers = new Headers(response.headers);
+    if (!headers.has('x-total-count') && payload.data.total_entries !== undefined) {
+      headers.set('x-total-count', String(payload.data.total_entries));
+    }
+    return {
+      data: payload.data.entries,
+      metadata: payload.metadata,
+      headers,
+      page: payload.data
+    };
+  }
+
   if (payload && typeof payload === 'object' && Array.isArray(payload.entries)) {
     const headers = new Headers(response.headers);
     if (!headers.has('x-total-count') && payload.total_entries !== undefined) {
       headers.set('x-total-count', String(payload.total_entries));
     }
     return { data: payload.entries, headers, page: payload };
+  }
+
+  if (
+    payload &&
+    typeof payload === 'object' &&
+    Object.prototype.hasOwnProperty.call(payload, 'data') &&
+    Object.prototype.hasOwnProperty.call(payload, 'metadata')
+  ) {
+    return { data: payload.data, metadata: payload.metadata, headers: response.headers };
   }
 
   return { data: payload, headers: response.headers };

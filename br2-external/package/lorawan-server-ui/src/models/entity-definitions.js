@@ -22,6 +22,9 @@ const COMMON_FIELD_LABEL_KEYS = {
   log_ignored: 'field.log_ignored',
   mac: 'field.mac',
   deveui: 'field.deveui',
+  dev_eui: 'field.deveui',
+  app_eui: 'field.appeui',
+  app_key: 'field.app_key',
   devaddr: 'field.devaddr',
   connid: 'field.connector_id',
   frid: 'field.frame_id',
@@ -56,6 +59,7 @@ const COMMON_FIELD_LABEL_KEYS = {
   data: 'field.data',
   gpspos: 'field.gps_position',
   tx_rfch: 'field.tx_rfch',
+  tx_rf_channels: 'field.tx_rf_channels',
   created_at: 'field.created_at',
   updated_at: 'field.updated_at'
 };
@@ -143,6 +147,36 @@ const definitions = {
       email: '',
       send_alerts: false
     },
+    formSections: {
+      default: [
+        {
+          id: 'general',
+          labelKey: 'section.general',
+          label: 'General',
+          fields: ['name', 'password', 'scopes']
+        },
+        {
+          id: 'notifications',
+          labelKey: 'section.notifications',
+          label: 'Notifications',
+          fields: ['send_alerts', 'email']
+        }
+      ],
+      edit: [
+        {
+          id: 'general',
+          labelKey: 'section.general',
+          label: 'General',
+          fields: ['name', 'password', 'scopes']
+        },
+        {
+          id: 'notifications',
+          labelKey: 'section.notifications',
+          label: 'Notifications',
+          fields: ['send_alerts', 'email']
+        }
+      ]
+    },
     perPage: DEFAULT_PER_PAGE
   },
   areas: {
@@ -223,12 +257,35 @@ const definitions = {
   },
   devices: {
     label: 'Devices',
-    idField: 'deveui',
+    idField: 'id',
     canList: true,
     canCreate: true,
     canEdit: true,
     canDelete: true,
-    listFields: ['deveui', 'appeui', 'profile', 'health_alerts'],
+    listFields: ['name', 'dev_eui', 'app_eui', 'network_name', 'updated_at'],
+    createDefaults: {
+      name: '',
+      dev_eui: '',
+      app_eui: '',
+      app_key: '',
+      network_name: ''
+    },
+    formSections: {
+      default: [
+        {
+          id: 'general',
+          labelKey: 'section.general',
+          label: 'General',
+          fields: ['name', 'dev_eui', 'app_eui', 'app_key', 'network_name']
+        },
+        {
+          id: 'radio',
+          labelKey: 'section.radio',
+          label: 'Radio',
+          fields: ['tx_rf_channels']
+        }
+      ]
+    },
     perPage: DEFAULT_PER_PAGE
   },
   nodes: {

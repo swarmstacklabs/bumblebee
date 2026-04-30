@@ -59,6 +59,7 @@ fn parseDeviceWriteInput(ctx: *context_mod.Context, body: []const u8) !app_mod.D
         try normalizeHexLower(ctx.allocator, parsed.value.dev_eui, 16),
         try normalizeHexLower(ctx.allocator, parsed.value.app_eui, 16),
         try normalizeHexLower(ctx.allocator, parsed.value.app_key, 32),
+        parsed.value.network_name,
     );
 }
 

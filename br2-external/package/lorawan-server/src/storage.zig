@@ -239,16 +239,18 @@ pub const DeviceRecord = struct {
     dev_eui: []const u8,
     app_eui: []const u8,
     app_key: []const u8,
+    network_name: ?[]const u8,
     created_at: []const u8,
     updated_at: []const u8,
 
-    pub fn init(id: i64, name: []const u8, dev_eui: []const u8, app_eui: []const u8, app_key: []const u8, created_at: []const u8, updated_at: []const u8) DeviceRecord {
+    pub fn init(id: i64, name: []const u8, dev_eui: []const u8, app_eui: []const u8, app_key: []const u8, network_name: ?[]const u8, created_at: []const u8, updated_at: []const u8) DeviceRecord {
         return .{
             .id = id,
             .name = name,
             .dev_eui = dev_eui,
             .app_eui = app_eui,
             .app_key = app_key,
+            .network_name = network_name,
             .created_at = created_at,
             .updated_at = updated_at,
         };
@@ -259,6 +261,7 @@ pub const DeviceRecord = struct {
         allocator.free(self.dev_eui);
         allocator.free(self.app_eui);
         allocator.free(self.app_key);
+        if (self.network_name) |value| allocator.free(value);
         allocator.free(self.created_at);
         allocator.free(self.updated_at);
     }
@@ -269,13 +272,15 @@ pub const DeviceWriteInput = struct {
     dev_eui: []const u8,
     app_eui: []const u8,
     app_key: []const u8,
+    network_name: ?[]const u8 = null,
 
-    pub fn init(name: []const u8, dev_eui: []const u8, app_eui: []const u8, app_key: []const u8) DeviceWriteInput {
+    pub fn init(name: []const u8, dev_eui: []const u8, app_eui: []const u8, app_key: []const u8, network_name: ?[]const u8) DeviceWriteInput {
         return .{
             .name = name,
             .dev_eui = dev_eui,
             .app_eui = app_eui,
             .app_key = app_key,
+            .network_name = network_name,
         };
     }
 
@@ -284,6 +289,7 @@ pub const DeviceWriteInput = struct {
         allocator.free(self.dev_eui);
         allocator.free(self.app_eui);
         allocator.free(self.app_key);
+        if (self.network_name) |value| allocator.free(value);
     }
 };
 
@@ -577,38 +583,45 @@ const migration_v6_sql =
     "CREATE INDEX IF NOT EXISTS idx_http_request_metrics_level_created_at ON http_request_metrics(level, created_at);" ++
     "CREATE INDEX IF NOT EXISTS idx_http_request_metrics_created_at ON http_request_metrics(created_at);";
 
-const migrations = [_]Migration{
-    .{
-        .version = 1,
-        .name = "initial_schema",
-        .sql = migration_v1_sql,
-    },
-    .{
-        .version = 2,
-        .name = "gateway_runtime_semtech_version",
-        .sql = migration_v2_sql,
-    },
-    .{
-        .version = 3,
-        .name = "connectors_runtime_table",
-        .sql = migration_v3_sql,
-    },
-    .{
-        .version = 4,
-        .name = "mac_command_metrics_table",
-        .sql = migration_v4_sql,
-    },
-    .{
-        .version = 5,
-        .name = "mac_command_metrics_level",
-        .sql = migration_v5_sql,
-    },
-    .{
-        .version = 6,
-        .name = "http_request_metrics_table",
-        .sql = migration_v6_sql,
-    },
-};
+const migration_v7_sql =
+    "ALTER TABLE users ADD COLUMN user_json TEXT NOT NULL DEFAULT '{}';";
+
+const migration_v8_sql =
+    "ALTER TABLE devices ADD COLUMN network_name TEXT NOT NULL DEFAULT '';";
+
+const migrations = [_]Migration{ .{
+    .version = 1,
+    .name = "initial_schema",
+    .sql = migration_v1_sql,
+}, .{
+    .version = 2,
+    .name = "gateway_runtime_semtech_version",
+    .sql = migration_v2_sql,
+}, .{
+    .version = 3,
+    .name = "connectors_runtime_table",
+    .sql = migration_v3_sql,
+}, .{
+    .version = 4,
+    .name = "mac_command_metrics_table",
+    .sql = migration_v4_sql,
+}, .{
+    .version = 5,
+    .name = "mac_command_metrics_level",
+    .sql = migration_v5_sql,
+}, .{
+    .version = 6,
+    .name = "http_request_metrics_table",
+    .sql = migration_v6_sql,
+}, .{
+    .version = 7,
+    .name = "users_metadata",
+    .sql = migration_v7_sql,
+}, .{
+    .version = 8,
+    .name = "devices_network_name",
+    .sql = migration_v8_sql,
+} };
 
 fn getSchemaVersion(db: *c.sqlite3) !i64 {
     const sql = "SELECT COALESCE(MAX(version), 0) FROM schema_migrations;";

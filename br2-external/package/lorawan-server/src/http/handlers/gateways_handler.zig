@@ -27,6 +27,19 @@ const Handler = CRUDHandler.bind(struct {
         return parseGatewayWriteInput(ctx, body);
     }
 
+    pub fn getListMetadata(ctx: *context_mod.Context) !GatewayMetadata {
+        return getGatewayMetadata(ctx);
+    }
+
+    pub fn getMetadata(ctx: *context_mod.Context, record: gateways_repository.Record) !GatewayMetadata {
+        _ = record;
+        return getGatewayMetadata(ctx);
+    }
+
+    pub fn deinitMetadata(ctx: *context_mod.Context, metadata: GatewayMetadata) void {
+        metadata.deinit(ctx.allocator);
+    }
+
     pub fn normalizeSortBy(sort_by: []const u8) ![]const u8 {
         if (std.mem.eql(u8, sort_by, "id")) return sort_by;
         if (std.mem.eql(u8, sort_by, "mac")) return sort_by;
@@ -50,6 +63,22 @@ const GatewayWriteBody = struct {
     network_name: []const u8,
     tx_rfch: u8 = 0,
 };
+
+const GatewayMetadata = struct {
+    networks: []gateways_repository.NetworkOption,
+    tx_rf_channels: [8]u16 = .{ 0, 1, 2, 3, 4, 5, 6, 7 },
+
+    fn deinit(self: GatewayMetadata, allocator: std.mem.Allocator) void {
+        for (self.networks) |*network| network.deinit(allocator);
+        allocator.free(self.networks);
+    }
+};
+
+fn getGatewayMetadata(ctx: *context_mod.Context) !GatewayMetadata {
+    return .{
+        .networks = try gateways_repository.listNetworkOptions(ctx.services.gateway_repo.storage, ctx.allocator),
+    };
+}
 
 fn parseGatewayWriteInput(ctx: *context_mod.Context, body: []const u8) !gateways_repository.WriteInput {
     const parsed = try std.json.parseFromSlice(GatewayWriteBody, ctx.allocator, body, .{

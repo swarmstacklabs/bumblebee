@@ -40,10 +40,10 @@
         </template>
 
         <template v-else-if="kind === 'string-array'">
-          <div class="scope-picker">
+          <div class="multi-value-picker">
             <div class="input-group">
               <select v-model="pendingOption" class="form-control" :disabled="disabled || availableOptions.length === 0">
-                <option value="">{{ t('ui.select_scope', 'Select scope') }}</option>
+                <option value="">{{ t('ui.select_option', 'Select option') }}</option>
                 <option v-for="option in availableOptions" :key="option" :value="option">{{ option }}</option>
               </select>
               <span class="input-group-btn">
@@ -58,24 +58,43 @@
               </span>
             </div>
 
-            <div v-if="selectedValues.length > 0" class="selected-scope-list">
+            <div v-if="selectedValues.length > 0" class="selected-value-list">
               <button
-                v-for="scope in selectedValues"
-                :key="scope"
+                v-for="value in selectedValues"
+                :key="value"
                 type="button"
-                class="ui-select-match-item btn btn-default btn-xs selected-scope-chip"
+                class="ui-select-match-item btn btn-default btn-xs selected-value-chip"
                 :disabled="disabled"
               >
                 <span
                   v-if="!disabled"
                   class="close ui-select-match-close"
-                  @click.stop="removeScope(scope)"
+                  @click.stop="removeSelectedValue(value)"
                 >
                   &nbsp;×
                 </span>
-                <span>{{ scope }}</span>
+                <span>{{ value }}</span>
               </button>
             </div>
+          </div>
+        </template>
+
+        <template v-else-if="kind === 'select'">
+          <select v-model="primitiveValues[field]" class="form-control" :disabled="disabled">
+            <option value=""></option>
+            <option v-for="option in options" :key="option" :value="option">{{ option }}</option>
+          </select>
+        </template>
+
+        <template v-else-if="kind === 'readonly-array'">
+          <div class="readonly-value-list">
+            <span
+              v-for="option in options"
+              :key="option"
+              class="label label-default readonly-value-chip"
+            >
+              {{ option }}
+            </span>
           </div>
         </template>
 
@@ -157,7 +176,7 @@ const addPendingOption = () => {
   pendingOption.value = '';
 };
 
-const removeScope = (scope) => {
-  setSelectedValues(selectedValues.value.filter((item) => item !== scope));
+const removeSelectedValue = (value) => {
+  setSelectedValues(selectedValues.value.filter((item) => item !== value));
 };
 </script>

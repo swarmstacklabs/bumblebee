@@ -35,6 +35,8 @@ export const MESSAGES = {
     'section.general': 'General',
     'section.email': 'E-Mail',
     'section.status': 'Status',
+    'section.notifications': 'Notifications',
+    'section.radio': 'Radio',
     'section.other': 'Other',
 
     'field.id': 'ID',
@@ -74,6 +76,7 @@ export const MESSAGES = {
     'field.tx_window': 'TX Window',
     'field.last_rx': 'Last RX',
     'field.appeui': 'AppEUI',
+    'field.app_key': 'AppKey',
     'field.mask': 'Mask',
     'field.format': 'Format',
     'field.parse_uplink': 'Parse Uplink',
@@ -93,6 +96,7 @@ export const MESSAGES = {
     'field.server_version': 'Server Version',
     'field.gps_position': 'GPS Position',
     'field.tx_rfch': 'TX RF Channel',
+    'field.tx_rf_channels': 'TX RF Channels',
     'field.created_at': 'Created At',
     'field.updated_at': 'Updated At'
   }

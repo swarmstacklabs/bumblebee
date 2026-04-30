@@ -38,6 +38,14 @@ pub const WriteInput = struct {
     }
 };
 
+pub const NetworkOption = struct {
+    name: []u8,
+
+    pub fn deinit(self: *NetworkOption, allocator: std.mem.Allocator) void {
+        allocator.free(self.name);
+    }
+};
+
 pub const CRUDRepository = crud_repository.interface(Record, WriteInput, []const u8);
 
 pub const Repository = struct {
@@ -155,6 +163,28 @@ pub const Repository = struct {
 
 pub fn crud(storage: StorageContext) CRUDRepository {
     return CRUDRepository.bind(Repository, storage);
+}
+
+pub fn listNetworkOptions(storage: StorageContext, allocator: std.mem.Allocator) ![]NetworkOption {
+    storage.lock();
+    defer storage.unlock();
+
+    const stmt = try storage.prepare("SELECT name FROM networks ORDER BY name ASC;");
+    defer stmt.deinit();
+
+    var out = std.ArrayList(NetworkOption){};
+    errdefer {
+        for (out.items) |*item| item.deinit(allocator);
+        out.deinit(allocator);
+    }
+
+    while (stmt.step() == .row) {
+        try out.append(allocator, .{
+            .name = try allocator.dupe(u8, stmt.readText(0) orelse ""),
+        });
+    }
+
+    return try out.toOwnedSlice(allocator);
 }
 
 fn countGateways(storage: StorageContext) !usize {

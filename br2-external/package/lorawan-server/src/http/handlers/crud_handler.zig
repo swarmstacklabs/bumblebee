@@ -32,6 +32,19 @@ pub fn interface(comptime Record: type, comptime WriteInput: type, comptime Id: 
                         try Impl.normalizeList(ctx, page.entries);
                     }
 
+                    if (@hasDecl(Impl, "getListMetadata")) {
+                        const metadata = try Impl.getListMetadata(ctx);
+                        defer if (@hasDecl(Impl, "deinitMetadata")) {
+                            Impl.deinitMetadata(ctx, metadata);
+                        };
+                        const json = try std.json.Stringify.valueAlloc(ctx.allocator, .{
+                            .data = page,
+                            .metadata = metadata,
+                        }, .{});
+                        ctx.res.setOwnedBody(.ok, "application/json", json);
+                        return;
+                    }
+
                     const json = try std.json.Stringify.valueAlloc(ctx.allocator, page, .{});
                     ctx.res.setOwnedBody(.ok, "application/json", json);
                 }
@@ -47,6 +60,18 @@ pub fn interface(comptime Record: type, comptime WriteInput: type, comptime Id: 
 
                     const record = maybe_record.?;
                     defer handler_utils.deinitRecord(ctx.allocator, record);
+
+                    if (@hasDecl(Impl, "getMetadata")) {
+                        const metadata = try Impl.getMetadata(ctx, record);
+                        defer if (@hasDecl(Impl, "deinitMetadata")) {
+                            Impl.deinitMetadata(ctx, metadata);
+                        };
+                        try ctx.res.setJson(.{
+                            .data = record,
+                            .metadata = metadata,
+                        });
+                        return;
+                    }
 
                     try ctx.res.setJson(record);
                 }
@@ -301,6 +326,65 @@ test "CRUDHandler emits not found and conflict responses" {
     defer delete_ctx.deinit();
     try Handler.delete(&delete_ctx);
     try testing.expectEqual(@as(u16, 404), delete_ctx.res.status.code());
+}
+
+test "CRUDHandler wraps GET response with metadata when implementation provides it" {
+    const testing = std.testing;
+
+    const Record = struct {
+        id: i64,
+
+        pub fn deinit(_: @This(), _: std.mem.Allocator) void {}
+    };
+
+    const WriteInput = struct {
+        pub fn deinit(_: @This(), _: std.mem.Allocator) void {}
+    };
+
+    const Repo = struct {
+        pub fn list(_: @This(), allocator: std.mem.Allocator, params: crud_repository.ListParams) !crud_repository.ListPage(Record) {
+            return crud_repository.ListPage(Record).init(try allocator.alloc(Record, 0), params, 0);
+        }
+
+        pub fn get(_: @This(), _: std.mem.Allocator, id: i64) !?Record {
+            return .{ .id = id };
+        }
+
+        pub fn create(_: @This(), _: WriteInput) !void {}
+
+        pub fn update(_: @This(), _: i64, _: WriteInput) !bool {
+            return true;
+        }
+
+        pub fn delete(_: @This(), _: i64) !bool {
+            return true;
+        }
+    };
+
+    const FakeHandler = struct {
+        pub const entity_name = "device";
+        pub const default_sort_by = "id";
+
+        pub fn repo(_: *context_mod.Context) Repo {
+            return .{};
+        }
+
+        pub fn parseWriteInput(_: *context_mod.Context, _: []const u8) !WriteInput {
+            return .{};
+        }
+
+        pub fn getMetadata(_: *context_mod.Context, _: Record) !struct { regions: []const []const u8 } {
+            return .{ .regions = &.{ "EU868", "US902" } };
+        }
+    };
+
+    const CrudHandler = interface(Record, WriteInput, i64, Repo);
+    const Handler = CrudHandler.bind(FakeHandler);
+
+    var get_ctx = testContext(testing.allocator, .GET, "/devices/42", "", "42");
+    defer get_ctx.deinit();
+    try Handler.get(&get_ctx);
+    try testing.expectEqualStrings("{\"data\":{\"id\":42},\"metadata\":{\"regions\":[\"EU868\",\"US902\"]}}", get_ctx.res.body);
 }
 
 test "CRUDHandler rejects invalid paging and sorting query params" {
