@@ -150,148 +150,128 @@ pub const StorageBackend = struct {
     }
 };
 
-pub const StatusResponse = struct {
-    status: []const u8,
+// pub const SystemMemoryUsage = struct {
+//     total_bytes: u64,
+//     available_bytes: u64,
+//     used_bytes: u64,
+//     process_resident_bytes: u64,
+//     process_virtual_bytes: u64,
 
-    pub fn init(status: []const u8) StatusResponse {
-        return .{ .status = status };
-    }
+//     pub fn init(
+//         total_bytes: u64,
+//         available_bytes: u64,
+//         used_bytes: u64,
+//         process_resident_bytes: u64,
+//         process_virtual_bytes: u64,
+//     ) SystemMemoryUsage {
+//         return .{
+//             .total_bytes = total_bytes,
+//             .available_bytes = available_bytes,
+//             .used_bytes = used_bytes,
+//             .process_resident_bytes = process_resident_bytes,
+//             .process_virtual_bytes = process_virtual_bytes,
+//         };
+//     }
 
-    pub fn deinit(_: StatusResponse) void {}
-};
+//     pub fn deinit(_: SystemMemoryUsage, _: std.mem.Allocator) void {}
+// };
 
-pub const ErrorResponse = struct {
-    @"error": []const u8,
+// pub const CpuUsage = struct {
+//     usage_percent: f64,
+//     user_time_ms: u64,
+//     system_time_ms: u64,
+//     logical_cores: usize,
 
-    pub fn init(message: []const u8) ErrorResponse {
-        return .{ .@"error" = message };
-    }
+//     pub fn init(usage_percent: f64, user_time_ms: u64, system_time_ms: u64, logical_cores: usize) CpuUsage {
+//         return .{
+//             .usage_percent = usage_percent,
+//             .user_time_ms = user_time_ms,
+//             .system_time_ms = system_time_ms,
+//             .logical_cores = logical_cores,
+//         };
+//     }
 
-    pub fn deinit(_: ErrorResponse) void {}
-};
+//     pub fn deinit(_: CpuUsage, _: std.mem.Allocator) void {}
+// };
 
-pub const SystemMemoryUsage = struct {
-    total_bytes: u64,
-    available_bytes: u64,
-    used_bytes: u64,
-    process_resident_bytes: u64,
-    process_virtual_bytes: u64,
+// pub const SystemResourcesRecord = struct {
+//     uptime_ms: u64,
+//     memory: SystemMemoryUsage,
+//     cpu: CpuUsage,
 
-    pub fn init(
-        total_bytes: u64,
-        available_bytes: u64,
-        used_bytes: u64,
-        process_resident_bytes: u64,
-        process_virtual_bytes: u64,
-    ) SystemMemoryUsage {
-        return .{
-            .total_bytes = total_bytes,
-            .available_bytes = available_bytes,
-            .used_bytes = used_bytes,
-            .process_resident_bytes = process_resident_bytes,
-            .process_virtual_bytes = process_virtual_bytes,
-        };
-    }
+//     pub fn init(uptime_ms: u64, memory: SystemMemoryUsage, cpu: CpuUsage) SystemResourcesRecord {
+//         return .{
+//             .uptime_ms = uptime_ms,
+//             .memory = memory,
+//             .cpu = cpu,
+//         };
+//     }
 
-    pub fn deinit(_: SystemMemoryUsage, _: std.mem.Allocator) void {}
-};
+//     pub fn deinit(self: SystemResourcesRecord, allocator: std.mem.Allocator) void {
+//         self.memory.deinit(allocator);
+//         self.cpu.deinit(allocator);
+//     }
+// };
 
-pub const CpuUsage = struct {
-    usage_percent: f64,
-    user_time_ms: u64,
-    system_time_ms: u64,
-    logical_cores: usize,
+// pub const DeviceRecord = struct {
+//     id: i64,
+//     name: []const u8,
+//     dev_eui: []const u8,
+//     app_eui: []const u8,
+//     app_key: []const u8,
+//     network_name: ?[]const u8,
+//     created_at: []const u8,
+//     updated_at: []const u8,
 
-    pub fn init(usage_percent: f64, user_time_ms: u64, system_time_ms: u64, logical_cores: usize) CpuUsage {
-        return .{
-            .usage_percent = usage_percent,
-            .user_time_ms = user_time_ms,
-            .system_time_ms = system_time_ms,
-            .logical_cores = logical_cores,
-        };
-    }
+//     pub fn init(id: i64, name: []const u8, dev_eui: []const u8, app_eui: []const u8, app_key: []const u8, network_name: ?[]const u8, created_at: []const u8, updated_at: []const u8) DeviceRecord {
+//         return .{
+//             .id = id,
+//             .name = name,
+//             .dev_eui = dev_eui,
+//             .app_eui = app_eui,
+//             .app_key = app_key,
+//             .network_name = network_name,
+//             .created_at = created_at,
+//             .updated_at = updated_at,
+//         };
+//     }
 
-    pub fn deinit(_: CpuUsage, _: std.mem.Allocator) void {}
-};
+//     pub fn deinit(self: DeviceRecord, allocator: std.mem.Allocator) void {
+//         allocator.free(self.name);
+//         allocator.free(self.dev_eui);
+//         allocator.free(self.app_eui);
+//         allocator.free(self.app_key);
+//         if (self.network_name) |value| allocator.free(value);
+//         allocator.free(self.created_at);
+//         allocator.free(self.updated_at);
+//     }
+// };
 
-pub const SystemResourcesRecord = struct {
-    uptime_ms: u64,
-    memory: SystemMemoryUsage,
-    cpu: CpuUsage,
+// pub const DeviceWriteInput = struct {
+//     name: []const u8,
+//     dev_eui: []const u8,
+//     app_eui: []const u8,
+//     app_key: []const u8,
+//     network_name: ?[]const u8 = null,
 
-    pub fn init(uptime_ms: u64, memory: SystemMemoryUsage, cpu: CpuUsage) SystemResourcesRecord {
-        return .{
-            .uptime_ms = uptime_ms,
-            .memory = memory,
-            .cpu = cpu,
-        };
-    }
+//     pub fn init(name: []const u8, dev_eui: []const u8, app_eui: []const u8, app_key: []const u8, network_name: ?[]const u8) DeviceWriteInput {
+//         return .{
+//             .name = name,
+//             .dev_eui = dev_eui,
+//             .app_eui = app_eui,
+//             .app_key = app_key,
+//             .network_name = network_name,
+//         };
+//     }
 
-    pub fn deinit(self: SystemResourcesRecord, allocator: std.mem.Allocator) void {
-        self.memory.deinit(allocator);
-        self.cpu.deinit(allocator);
-    }
-};
-
-pub const DeviceRecord = struct {
-    id: i64,
-    name: []const u8,
-    dev_eui: []const u8,
-    app_eui: []const u8,
-    app_key: []const u8,
-    network_name: ?[]const u8,
-    created_at: []const u8,
-    updated_at: []const u8,
-
-    pub fn init(id: i64, name: []const u8, dev_eui: []const u8, app_eui: []const u8, app_key: []const u8, network_name: ?[]const u8, created_at: []const u8, updated_at: []const u8) DeviceRecord {
-        return .{
-            .id = id,
-            .name = name,
-            .dev_eui = dev_eui,
-            .app_eui = app_eui,
-            .app_key = app_key,
-            .network_name = network_name,
-            .created_at = created_at,
-            .updated_at = updated_at,
-        };
-    }
-
-    pub fn deinit(self: DeviceRecord, allocator: std.mem.Allocator) void {
-        allocator.free(self.name);
-        allocator.free(self.dev_eui);
-        allocator.free(self.app_eui);
-        allocator.free(self.app_key);
-        if (self.network_name) |value| allocator.free(value);
-        allocator.free(self.created_at);
-        allocator.free(self.updated_at);
-    }
-};
-
-pub const DeviceWriteInput = struct {
-    name: []const u8,
-    dev_eui: []const u8,
-    app_eui: []const u8,
-    app_key: []const u8,
-    network_name: ?[]const u8 = null,
-
-    pub fn init(name: []const u8, dev_eui: []const u8, app_eui: []const u8, app_key: []const u8, network_name: ?[]const u8) DeviceWriteInput {
-        return .{
-            .name = name,
-            .dev_eui = dev_eui,
-            .app_eui = app_eui,
-            .app_key = app_key,
-            .network_name = network_name,
-        };
-    }
-
-    pub fn deinit(self: DeviceWriteInput, allocator: std.mem.Allocator) void {
-        allocator.free(self.name);
-        allocator.free(self.dev_eui);
-        allocator.free(self.app_eui);
-        allocator.free(self.app_key);
-        if (self.network_name) |value| allocator.free(value);
-    }
-};
+//     pub fn deinit(self: DeviceWriteInput, allocator: std.mem.Allocator) void {
+//         allocator.free(self.name);
+//         allocator.free(self.dev_eui);
+//         allocator.free(self.app_eui);
+//         allocator.free(self.app_key);
+//         if (self.network_name) |value| allocator.free(value);
+//     }
+// };
 
 pub const StorageContext = struct {
     allocator: std.mem.Allocator,

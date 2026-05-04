@@ -1,10 +1,21 @@
 const std = @import("std");
 
 const config = @import("config.zig");
+
 pub const StorageBackend = @import("db.zig").StorageBackend;
 pub const StorageContext = @import("db.zig").StorageContext;
+
 const pending_downlinks = @import("lora/pending_downlinks.zig");
+
+pub const StatusResponse = @import("http/http.zig").StatusResponse;
+pub const ErrorResponse = @import("http/http.zig").ErrorResponse;
+
 const storage_mod = @import("storage.zig");
+pub const SystemMemoryUsage = @import("model/system_resources.zig").SystemMemoryUsage;
+pub const CpuUsage = @import("model/system_resources.zig").CpuUsage;
+pub const SystemResourcesRecord = @import("model/system_resources.zig").SystemResourcesRecord;
+pub const DeviceRecord = @import("model/device.zig").DeviceRecord;
+pub const DeviceWriteInput = @import("dto/device.zig").DeviceWriteInput;
 
 pub const default_udp_port = config.default_udp_port;
 pub const default_http_port = config.default_http_port;
@@ -21,14 +32,6 @@ pub const env_log_cleanup_period = config.env_log_cleanup_period;
 pub const env_metrics_cleanup_period = config.env_metrics_cleanup_period;
 pub const AdminConfig = config.AdminConfig;
 pub const Config = config.Config;
-
-pub const StatusResponse = storage_mod.StatusResponse;
-pub const ErrorResponse = storage_mod.ErrorResponse;
-pub const SystemMemoryUsage = storage_mod.SystemMemoryUsage;
-pub const CpuUsage = storage_mod.CpuUsage;
-pub const SystemResourcesRecord = storage_mod.SystemResourcesRecord;
-pub const DeviceRecord = storage_mod.DeviceRecord;
-pub const DeviceWriteInput = storage_mod.DeviceWriteInput;
 
 pub const App = struct {
     allocator: std.mem.Allocator,
