@@ -53,6 +53,7 @@ pub fn run(app: *App, runtime_config: *const Config) !void {
 
         if ((pollfds.items[0].revents & posix.POLL.IN) != 0) {
             try udp.drainReady(&udp_server);
+            http.broadcastTimelineEvents(allocator, &http_conns);
         }
 
         if ((pollfds.items[1].revents & posix.POLL.IN) != 0) {

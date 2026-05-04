@@ -7,7 +7,8 @@ export const sideNavMenu = [
       { id: 'users', label: 'Users', icon: 'fa-user', to: '/users/list' },
       { id: 'servers', label: 'Servers', icon: 'fa-desktop', to: '/servers/list' },
       { id: 'config', label: 'Configuration', icon: 'fa-cog', to: '/config/edit/main' },
-      { id: 'events', label: 'Events', icon: 'fa-exclamation-triangle', to: '/events/list' }
+      { id: 'events', label: 'Events', icon: 'fa-exclamation-triangle', to: '/events/list' },
+      { id: 'timeline', label: 'Metrics Timeline', icon: 'fa-line-chart', to: '/timeline' }
     ]
   },
   {

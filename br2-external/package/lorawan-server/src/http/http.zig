@@ -5,9 +5,11 @@ pub const acceptReadyClients = server.acceptReadyClients;
 pub const initServerSocket = server.initServerSocket;
 pub const serverMain = server.serverMain;
 pub const serviceReadyClient = server.serviceReadyClient;
+pub const broadcastTimelineEvents = server.broadcastTimelineEvents;
 
 test {
     _ = @import("router.zig");
+    _ = @import("timeline_ws.zig");
 }
 
 pub const StatusResponse = struct {

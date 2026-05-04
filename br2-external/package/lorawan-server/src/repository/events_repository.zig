@@ -29,6 +29,13 @@ pub const Record = struct {
 
 pub const Page = crud_repository.ListPage(Record);
 
+pub const TimelineParams = struct {
+    start_ms: ?i64 = null,
+    end_ms: ?i64 = null,
+    timezone_offset_minutes: i32 = 0,
+    limit: usize = 100,
+};
+
 pub const Repository = struct {
     storage: StorageContext,
 
@@ -78,6 +85,51 @@ pub const Repository = struct {
 
         return Page.init(try out.toOwnedSlice(allocator), params, total_entries);
     }
+
+    pub fn timeline(self: Repository, allocator: std.mem.Allocator, params: TimelineParams) ![]Record {
+        self.storage.lock();
+        defer self.storage.unlock();
+
+        var timestamp_modifier_buf: [32]u8 = undefined;
+        const timestamp_modifier = try timezoneOffsetModifier(&timestamp_modifier_buf, params.timezone_offset_minutes);
+
+        const sql =
+            "SELECT id, datetime(created_at, ?), event_type, entity_type, entity_id, payload_json " ++
+            "FROM events " ++
+            "WHERE (? IS NULL OR unixepoch(created_at) * 1000 >= ?) " ++
+            "AND (? IS NULL OR unixepoch(created_at) * 1000 <= ?) " ++
+            "ORDER BY created_at DESC, id DESC LIMIT ?;";
+        const stmt = try self.storage.prepare(sql);
+        defer stmt.deinit();
+
+        stmt.bindText(1, timestamp_modifier);
+        bindOptionalInt64(stmt, 2, params.start_ms);
+        bindOptionalInt64(stmt, 3, params.start_ms);
+        bindOptionalInt64(stmt, 4, params.end_ms);
+        bindOptionalInt64(stmt, 5, params.end_ms);
+        stmt.bindInt64(6, params.limit);
+
+        var out = std.ArrayList(Record){};
+        errdefer {
+            for (out.items) |*item| item.deinit(allocator);
+            out.deinit(allocator);
+        }
+
+        while (stmt.step() == .row) {
+            const created_at = stmt.readText(1) orelse "";
+            try out.append(allocator, .{
+                .evid = stmt.readInt64(0),
+                .datetime = try allocator.dupe(u8, created_at),
+                .last_rx = try allocator.dupe(u8, created_at),
+                .entity = try allocator.dupe(u8, stmt.readText(3) orelse ""),
+                .eid = try allocator.dupe(u8, stmt.readText(4) orelse ""),
+                .text = try allocator.dupe(u8, stmt.readText(2) orelse ""),
+                .args = try allocator.dupe(u8, stmt.readText(5) orelse "{}"),
+            });
+        }
+
+        return out.toOwnedSlice(allocator);
+    }
 };
 
 fn countEvents(storage: StorageContext) !usize {
@@ -103,4 +155,13 @@ fn sqlSortDirection(sort_order: SortOrder) []const u8 {
         .asc => "ASC",
         .desc => "DESC",
     };
+}
+
+fn bindOptionalInt64(stmt: db_mod.Statement, index: usize, value: ?i64) void {
+    if (value) |actual| stmt.bindInt64(index, actual) else stmt.bindNull(index);
+}
+
+fn timezoneOffsetModifier(buf: []u8, timezone_offset_minutes: i32) ![]const u8 {
+    const display_offset = -timezone_offset_minutes;
+    return std.fmt.bufPrint(buf, "{d} minutes", .{display_offset});
 }

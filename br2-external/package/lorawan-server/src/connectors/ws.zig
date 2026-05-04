@@ -41,6 +41,55 @@ pub fn publish(allocator: std.mem.Allocator, stream: *std.net.Stream, endpoint: 
     try stream.writeAll(frame);
 }
 
+pub fn publishSecure(allocator: std.mem.Allocator, endpoint: Endpoint, config: ConfigEntry, payload: []const u8) !void {
+    var client = std.http.Client{ .allocator = allocator };
+    defer client.deinit();
+
+    if (!std.http.Client.disable_tls) {
+        try client.ca_bundle.rescan(allocator);
+        client.next_https_rescan_certs = false;
+    }
+
+    const conn = try client.connectTcp(endpoint.host, endpoint.port, .tls);
+    defer conn.destroy();
+
+    var nonce: [16]u8 = undefined;
+    std.crypto.random.bytes(&nonce);
+
+    var key_buf: [32]u8 = undefined;
+    const key = std.base64.standard.Encoder.encode(&key_buf, &nonce);
+
+    const writer = conn.writer();
+    try writer.print(
+        "GET {s} HTTP/1.1\r\nHost: {s}:{d}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {s}\r\n",
+        .{ endpoint.path, endpoint.host, endpoint.port, key },
+    );
+    if (endpoint.username != null or endpoint.password != null) {
+        const auth_value = try wire.basicAuthHeader(allocator, endpoint.username orelse "", endpoint.password orelse "");
+        defer allocator.free(auth_value);
+        try writer.print("Authorization: Basic {s}\r\n", .{auth_value});
+    }
+    if (config.client_id) |client_id| {
+        try writer.print("X-Client-Id: {s}\r\n", .{client_id});
+    }
+    try writer.writeAll("\r\n");
+    try conn.flush();
+
+    const response = try readHttpHeadersReader(allocator, conn.reader());
+    defer allocator.free(response);
+
+    if (!std.mem.startsWith(u8, response, "HTTP/1.1 101")) return error.WebSocketUpgradeRejected;
+    const accept = try websocketAccept(allocator, key);
+    defer allocator.free(accept);
+    if (std.mem.indexOf(u8, response, accept) == null) return error.WebSocketAcceptMismatch;
+
+    const frame = try buildTextFrame(allocator, payload);
+    defer allocator.free(frame);
+    try writer.writeAll(frame);
+    try conn.flush();
+    try conn.end();
+}
+
 fn readHttpHeaders(allocator: std.mem.Allocator, stream: *std.net.Stream) ![]u8 {
     var out = std.ArrayList(u8){};
     defer out.deinit(allocator);
@@ -48,6 +97,20 @@ fn readHttpHeaders(allocator: std.mem.Allocator, stream: *std.net.Stream) ![]u8 
     var buf: [256]u8 = undefined;
     while (true) {
         const n = try stream.read(&buf);
+        if (n == 0) return error.ConnectionClosed;
+        try out.appendSlice(allocator, buf[0..n]);
+        if (std.mem.indexOf(u8, out.items, "\r\n\r\n") != null) break;
+    }
+    return out.toOwnedSlice(allocator);
+}
+
+fn readHttpHeadersReader(allocator: std.mem.Allocator, reader: *std.Io.Reader) ![]u8 {
+    var out = std.ArrayList(u8){};
+    defer out.deinit(allocator);
+
+    var buf: [256]u8 = undefined;
+    while (true) {
+        const n = try reader.readSliceShort(&buf);
         if (n == 0) return error.ConnectionClosed;
         try out.appendSlice(allocator, buf[0..n]);
         if (std.mem.indexOf(u8, out.items, "\r\n\r\n") != null) break;

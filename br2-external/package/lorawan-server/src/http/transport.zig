@@ -20,7 +20,13 @@ pub const InitError = error{
 };
 
 pub const Connection = struct {
+    pub const Mode = enum {
+        http,
+        timeline_ws,
+    };
+
     fd: posix.socket_t,
+    mode: Mode = .http,
     buf: [65536]u8 = undefined,
     used: usize = 0,
     header_end: ?usize = null,
@@ -58,6 +64,13 @@ pub const Connection = struct {
         const end = self.header_end orelse return null;
         if (self.used < end + self.content_length) return null;
         return self.buf[0 .. end + self.content_length];
+    }
+
+    pub fn resetRequestBuffer(self: *Connection) void {
+        self.used = 0;
+        self.header_end = null;
+        self.content_length = 0;
+        self.sent_continue = false;
     }
 };
 

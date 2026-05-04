@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const context_mod = @import("../context.zig");
-const crud_repository = @import("../../repository/crud_repository.zig");
+const events_repository = @import("../../repository/events_repository.zig");
 
 const TimelineItem = struct {
     id: i64,
@@ -15,22 +15,22 @@ const TimelineResponse = struct {
 };
 
 pub fn list(ctx: *context_mod.Context) !void {
-    const params = crud_repository.ListParams{
-        .page = 1,
-        .page_size = 100,
-        .sort_by = "datetime",
-        .sort_order = .desc,
+    const params = events_repository.TimelineParams{
+        .start_ms = try optionalQueryInt(ctx.req.queryParam("start_ms")),
+        .end_ms = try optionalQueryInt(ctx.req.queryParam("end_ms")),
+        .timezone_offset_minutes = try timezoneOffsetMinutes(ctx.req.queryParam("timezone_offset_minutes")),
+        .limit = 100,
     };
-    const page = try ctx.services.events_repo.list(ctx.allocator, params);
+    const entries = try ctx.services.events_repo.timeline(ctx.allocator, params);
     defer {
-        for (page.entries) |*record| record.deinit(ctx.allocator);
-        ctx.allocator.free(page.entries);
+        for (entries) |*record| record.deinit(ctx.allocator);
+        ctx.allocator.free(entries);
     }
 
-    var items = try ctx.allocator.alloc(TimelineItem, page.entries.len);
+    var items = try ctx.allocator.alloc(TimelineItem, entries.len);
     defer ctx.allocator.free(items);
 
-    for (page.entries, 0..) |event, index| {
+    for (entries, 0..) |event, index| {
         items[index] = .{
             .id = event.evid,
             .content = event.text,
@@ -40,4 +40,16 @@ pub fn list(ctx: *context_mod.Context) !void {
     }
 
     try ctx.res.setJson(TimelineResponse{ .items = items });
+}
+
+fn optionalQueryInt(value: ?[]const u8) !?i64 {
+    const text = value orelse return null;
+    if (text.len == 0) return null;
+    return std.fmt.parseInt(i64, text, 10) catch return error.BadRequest;
+}
+
+fn timezoneOffsetMinutes(value: ?[]const u8) !i32 {
+    const parsed = try optionalQueryInt(value) orelse return 0;
+    if (parsed < -1440 or parsed > 1440) return error.BadRequest;
+    return @intCast(parsed);
 }

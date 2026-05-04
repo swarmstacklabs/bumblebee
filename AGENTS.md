@@ -1,4 +1,4 @@
-## Zig Interfaces Guide: Singleton Implementations
+## Zig Interfaces Guide: Database Implementations
 
 This guide shows a safe Zig pattern for runtime interfaces when you need one selected implementation, for example:
 
@@ -15,6 +15,7 @@ const db = try sqlite.create(allocator, "app.db");
 defer db.destroy();
 
 try db.exec("CREATE TABLE users (id INTEGER)");
+```
 
 Application code depends only on:
 

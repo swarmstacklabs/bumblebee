@@ -468,6 +468,12 @@ const POLL_INTERVAL_MS = 5000;
 const TIMELINE_ZOOM_MAX_MS = 2592000000;
 const TIMELINE_ZOOM_MIN_MS = 1000;
 
+const timelineQueryParams = (range) => new URLSearchParams({
+  start_ms: String(range.start.getTime()),
+  end_ms: String(range.end.getTime()),
+  timezone_offset_minutes: String(new Date().getTimezoneOffset())
+});
+
 const syncTimelineItems = (nextItems) => {
   const nextIds = new Set(nextItems.map((entry) => entry.id));
   const existingIds = items.getIds();
@@ -485,10 +491,7 @@ const fetchTimelineItems = async () => {
   }
 
   const range = timeline.getWindow();
-  const params = new URLSearchParams({
-    start: range.start.toISOString(),
-    end: range.end.toISOString()
-  });
+  const params = timelineQueryParams(range);
 
   const response = await fetch(`/admin/timeline?${params.toString()}`);
   if (!response.ok) {

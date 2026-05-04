@@ -81,7 +81,7 @@ fn configFromRecord(allocator: std.mem.Allocator, record: connectors_repository.
     return config;
 }
 
-fn encodeEnvelope(allocator: std.mem.Allocator, event: PublishedEvent) ![]u8 {
+pub fn encodeEnvelope(allocator: std.mem.Allocator, event: PublishedEvent) ![]u8 {
     var list = std.ArrayList(u8){};
     defer list.deinit(allocator);
 
@@ -103,6 +103,10 @@ fn publishOne(allocator: std.mem.Allocator, config: ConfigEntry, payload: []cons
     const endpoint = try types.Endpoint.parse(allocator, config);
     defer endpoint.deinit(allocator);
 
+    if (config.kind == .wss or (config.kind == .ws and endpoint.is_tls)) {
+        return ws.publishSecure(allocator, endpoint, config, payload);
+    }
+
     var stream = try std.net.tcpConnectToHost(allocator, endpoint.host, endpoint.port);
     defer stream.close();
 
@@ -111,6 +115,7 @@ fn publishOne(allocator: std.mem.Allocator, config: ConfigEntry, payload: []cons
         .ws => try ws.publish(allocator, &stream, endpoint, config, payload),
         .rabbitmq => try rabbitmq.publish(allocator, &stream, endpoint, config, payload),
         .kafka => try kafka.publish(allocator, &stream, config, payload),
+        .wss => unreachable,
     }
 }
 
@@ -138,6 +143,64 @@ test "configFromRecord parses and validates connector records" {
     try std.testing.expectEqual(Kind.kafka, config.kind);
     try std.testing.expectEqualStrings("lorawan", config.topic.?);
     try std.testing.expectEqual(@as(i32, 2), config.partition);
+}
+
+test "configFromRecord accepts secure websocket connector records" {
+    const record = connectors_repository.Record{
+        .id = 1,
+        .name = try std.testing.allocator.dupe(u8, "timeline"),
+        .connector_type = try std.testing.allocator.dupe(u8, "ws"),
+        .uri = try std.testing.allocator.dupe(u8, "wss://ui.example.test/timeline"),
+        .enabled = true,
+        .topic = null,
+        .exchange_name = null,
+        .routing_key = null,
+        .partition = 0,
+        .client_id = null,
+        .username = null,
+        .password = null,
+    };
+    var owned_record = record;
+    defer owned_record.deinit(std.testing.allocator);
+
+    var config = try configFromRecord(std.testing.allocator, owned_record);
+    defer config.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Kind.ws, config.kind);
+
+    const endpoint = try types.Endpoint.parse(std.testing.allocator, config);
+    defer endpoint.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u16, 443), endpoint.port);
+    try std.testing.expect(endpoint.is_tls);
+}
+
+test "configFromRecord accepts unsecure websocket connector records" {
+    const record = connectors_repository.Record{
+        .id = 1,
+        .name = try std.testing.allocator.dupe(u8, "timeline-local"),
+        .connector_type = try std.testing.allocator.dupe(u8, "ws"),
+        .uri = try std.testing.allocator.dupe(u8, "ws://localhost/events"),
+        .enabled = true,
+        .topic = null,
+        .exchange_name = null,
+        .routing_key = null,
+        .partition = 0,
+        .client_id = null,
+        .username = null,
+        .password = null,
+    };
+    var owned_record = record;
+    defer owned_record.deinit(std.testing.allocator);
+
+    var config = try configFromRecord(std.testing.allocator, owned_record);
+    defer config.deinit(std.testing.allocator);
+
+    try std.testing.expectEqual(Kind.ws, config.kind);
+
+    const endpoint = try types.Endpoint.parse(std.testing.allocator, config);
+    defer endpoint.deinit(std.testing.allocator);
+    try std.testing.expectEqual(@as(u16, 80), endpoint.port);
+    try std.testing.expect(!endpoint.is_tls);
 }
 
 test "encode envelope embeds payload as nested json" {

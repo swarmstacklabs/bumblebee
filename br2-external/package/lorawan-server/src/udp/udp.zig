@@ -7,6 +7,7 @@ const Config = app_mod.Config;
 const connectors = @import("../connectors.zig");
 const event_repository = @import("../repository/event_repository.zig");
 const logger = @import("../logger.zig");
+const timeline_ws = @import("../http/timeline_ws.zig");
 const lora = @import("../lora.zig");
 const storage = @import("../storage.zig");
 const udp_transport = @import("transport.zig");
@@ -47,11 +48,18 @@ pub const Server = struct {
 fn persistAndPublishEvent(app: *App, registry: gateway_registry.Registry, event_type: []const u8, gateway_mac: [8]u8, payload_json: []const u8) !void {
     try registry.insertEvent(event_type, gateway_mac, try app.allocator.dupe(u8, payload_json));
 
+    const received_at_ms = std.time.milliTimestamp();
     connectors.publishFromStorage(app.allocator, app.storage(), .{
         .event_type = event_type,
         .gateway_mac = gateway_mac,
         .payload_json = payload_json,
-        .received_at_ms = std.time.milliTimestamp(),
+        .received_at_ms = received_at_ms,
+    });
+    timeline_ws.enqueue(app.allocator, .{
+        .event_type = event_type,
+        .gateway_mac = gateway_mac,
+        .payload_json = payload_json,
+        .received_at_ms = received_at_ms,
     });
 }
 

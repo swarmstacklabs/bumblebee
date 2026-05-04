@@ -21,6 +21,7 @@ const server_handler = @import("handlers/server_handler.zig");
 const events_handler = @import("handlers/events_handler.zig");
 const users_handler = @import("handlers/users_handler.zig");
 const timeline_handler = @import("handlers/timeline_handler.zig");
+const timeline_ws = @import("timeline_ws.zig");
 
 const recover_middleware = @import("middleware/recover.zig");
 const logger_middleware = @import("middleware/logger.zig");
@@ -132,6 +133,10 @@ pub fn acceptReadyClients(
 }
 
 pub fn serviceReadyClient(app: *App, runtime_config: *const Config, conn: *Connection) !bool {
+    if (conn.mode == .timeline_ws) {
+        return timeline_ws.drainClient(conn);
+    }
+
     while (conn.used < conn.buf.len) {
         const n = conn.recv() catch |err| switch (err) {
             error.WouldBlock => return false,
@@ -157,6 +162,10 @@ pub fn serviceReadyClient(app: *App, runtime_config: *const Config, conn: *Conne
             const req = try request_mod.parseConnection(conn, &header_buf);
 
             const services = services_mod.Services.init(app, runtime_config);
+            const handled_upgrade_request = try maybeUpgradeTimelineWebSocket(app.allocator, &services, conn, req);
+            if (conn.mode == .timeline_ws) return false;
+            if (handled_upgrade_request) return true;
+
             var ctx = context_mod.Context.init(app.allocator, services, req);
             defer ctx.deinit();
 
@@ -174,6 +183,27 @@ pub fn serviceReadyClient(app: *App, runtime_config: *const Config, conn: *Conne
     }
 
     return error.RequestTooLarge;
+}
+
+pub fn broadcastTimelineEvents(allocator: std.mem.Allocator, conns: *std.ArrayList(Connection)) void {
+    timeline_ws.broadcastPending(allocator, conns);
+}
+
+fn maybeUpgradeTimelineWebSocket(
+    allocator: std.mem.Allocator,
+    services: *const services_mod.Services,
+    conn: *Connection,
+    req: request_mod.Request,
+) !bool {
+    if (!std.mem.eql(u8, req.path, "/admin/timeline/ws")) return false;
+    _ = services.authenticator.authenticateBasic(allocator, req.header("Authorization")) catch |err| switch (err) {
+        error.Unauthorized => {
+            try conn.writeAll("HTTP/1.1 401 Unauthorized\r\nWWW-Authenticate: Basic realm=\"lorawan-server\"\r\nContent-Length: 13\r\nConnection: close\r\n\r\nunauthorized\n");
+            return true;
+        },
+        else => return err,
+    };
+    return timeline_ws.handleUpgrade(allocator, conn, req);
 }
 
 fn parseContentLength(headers: []const u8) !usize {
